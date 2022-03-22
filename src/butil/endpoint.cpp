@@ -98,6 +98,10 @@ int ip2hostname(ip_t ip, std::string* host) {
 
 EndPointStr endpoint2str(const EndPoint& point) {
     EndPointStr str;
+    if (is_unix_sock_endpoint(point)) {
+        snprintf(str._buf, sizeof(str._buf), "%s", point.socket_file.c_str());
+        return str;
+    }
     if (inet_ntop(AF_INET, &point.ip, str._buf, INET_ADDRSTRLEN) == NULL) {
         return endpoint2str(EndPoint(IP_NONE, 0));
     }
@@ -381,6 +385,15 @@ int get_remote_side(int fd, EndPoint *out) {
         *out = butil::EndPoint(*(sockaddr_in*)&addr);
     }
     return 0;
+}
+
+bool is_unix_sock_endpoint(const EndPoint& point) {
+    return !point.socket_file.empty();
+}
+
+bool is_sock_file_name_valid(const char* filename) {
+    return strlen(filename) < UNIX_SOCKET_FILE_PATH_SIZE;
+
 }
 
 }  // namespace butil

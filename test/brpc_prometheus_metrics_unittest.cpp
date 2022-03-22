@@ -123,3 +123,80 @@ TEST(PrometheusMetrics, sanity) {
     ASSERT_EQ(0, server.Stop(0));
     ASSERT_EQ(0, server.Join());
 }
+/*
+TEST(PrometheusMetricsDumperTest, sanity) {
+    butil::IOBufBuilder os;
+    brpc::PrometheusMetricsDumper dumper(&os, "test");
+    std::string test1("\"\"");
+    ASSERT_FALSE(dumper.dump("test1", test1));
+
+    std::string test2("\"hello word\"");
+    ASSERT_FALSE(dumper.dump("test2", test2));
+
+    std::string test3("\"{\"name\":\"haorooms\",\"address\":\"\"}\"");
+    ASSERT_TRUE(dumper.dump("test3", test3));
+
+    std::string test4("\"{\"name\":\"haorooms\",\"address\":\"word\"}\"");
+    ASSERT_TRUE(dumper.dump("test4", test4));
+
+    std::string test5("\"{\"name\":\"haorooms\",\"number\":1}\"");
+    ASSERT_FALSE(dumper.dump("test5", test5));
+    std::cout << "dump result:\n" << os << "\n";
+
+    butil::IOBuf buf;
+    os.move_to(buf);
+    std::string strformat = buf.to_string();
+
+    int end_pos = strformat.find('\n');
+    ASSERT_TRUE(std::string::npos != end_pos);
+    ASSERT_EQ("# HELP test3", strformat.substr(0, end_pos));
+    end_pos++;
+    strformat = strformat.substr(end_pos);
+
+    end_pos = strformat.find('\n');
+    ASSERT_TRUE(std::string::npos != end_pos);
+    ASSERT_EQ("# TYPE test3 gauge", strformat.substr(0, end_pos));
+    end_pos++;
+    strformat = strformat.substr(end_pos);
+
+    end_pos = strformat.find('\n');
+    ASSERT_TRUE(std::string::npos != end_pos);
+    ASSERT_EQ("test3{name=\"haorooms\",address=\"\"} 0",
+              strformat.substr(0, end_pos));
+    end_pos++;
+    strformat = strformat.substr(end_pos);
+
+    end_pos = strformat.find('\n');
+    ASSERT_TRUE(std::string::npos != end_pos);
+    ASSERT_EQ("# HELP test4", strformat.substr(0, end_pos));
+    end_pos++;
+    strformat = strformat.substr(end_pos);
+
+    end_pos = strformat.find('\n');
+    ASSERT_TRUE(std::string::npos != end_pos);
+    ASSERT_EQ("# TYPE test4 gauge", strformat.substr(0, end_pos));
+    end_pos++;
+    strformat = strformat.substr(end_pos);
+
+    ASSERT_EQ("test4{name=\"haorooms\",address=\"word\"} 0\n", strformat);
+
+    // 运行结果
+    // [==========] Running 1 test from 1 test case.
+    // [----------] Global test environment set-up.
+    // [----------] 1 test from PrometheusMetricsDumperTest
+    // [ RUN      ] PrometheusMetricsDumperTest.sanity
+    // dump result:
+    // # HELP test3
+    // # TYPE test3 gauge
+    // test3{name="haorooms",address=""} 0
+    // # HELP test4
+    // # TYPE test4 gauge
+    // test4{name="haorooms",address="word"} 0
+
+    // [       OK ] PrometheusMetricsDumperTest.sanity (1 ms)
+    // [----------] 1 test from PrometheusMetricsDumperTest (1 ms total)
+
+    // [----------] Global test environment tear-down
+    // [==========] 1 test from 1 test case ran. (1 ms total)
+    // [  PASSED  ] 1 test.
+}*/

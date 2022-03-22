@@ -110,6 +110,7 @@ int BAIDU_WEAK bthread_setspecific(bthread_key_t key, void* data);
 void* BAIDU_WEAK bthread_getspecific(bthread_key_t key);
 }
 
+namespace butil{
 namespace logging {
 
 DEFINE_bool(crash_on_fatal_log, false,
@@ -838,8 +839,8 @@ void LogStream::FlushWithoutReset() {
             // Remove top 3 frames which are useless to users.
             // #2 may be ~LogStream
             //   #0 0x00000059ccae butil::debug::StackTrace::StackTrace()
-            //   #1 0x0000005947c7 logging::LogStream::FlushWithoutReset()
-            //   #2 0x000000594b88 logging::LogMessage::~LogMessage()
+            //   #1 0x0000005947c7 butil::logging::LogStream::FlushWithoutReset()
+            //   #2 0x000000594b88 butil::logging::LogMessage::~LogMessage()
             butil::debug::StackTrace trace_stripped(addrs + 3, count - 3);
             trace_stripped.OutputToStream(this);
         } else {
@@ -1435,6 +1436,7 @@ const bool ALLOW_UNUSED validate_min_log_level = GFLAGS_NS::RegisterFlagValidato
     &FLAGS_minloglevel, NonNegativeInteger);
 
 }  // namespace logging
+}  // namespace butil
 
 std::ostream& operator<<(std::ostream& out, const wchar_t* wstr) {
     return out << butil::WideToUTF8(std::wstring(wstr));

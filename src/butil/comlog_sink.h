@@ -101,18 +101,18 @@ struct ComlogSinkOptions {
 
 // The LogSink to flush logs into comlog. Notice that this is a singleton class.
 // [ Setup from a Configure file ]
-//   if (logging::ComlogSink::GetInstance()->SetupFromConfig("log/log.conf") != 0) {
+//   if (butil::logging::ComlogSink::GetInstance()->SetupFromConfig("log/log.conf") != 0) {
 //       LOG(ERROR) << "Fail to setup comlog";
 //       return -1;
 //   }
-//   logging::SetLogSink(ComlogSink::GetInstance());
+//   butil::logging::SetLogSink(ComlogSink::GetInstance());
 //
 // [ Setup from ComlogSinkOptions ]
-//   if (logging::ComlogSink::GetInstance()->Setup(NULL/*default options*/) != 0) {
+//   if (butil::logging::ComlogSink::GetInstance()->Setup(NULL/*default options*/) != 0) {
 //       LOG(ERROR) << "Fail to setup comlog";
 //       return -1;
 //   }
-//   logging::SetLogSink(ComlogSink::GetInstance());
+//   butil::logging::SetLogSink(ComlogSink::GetInstance());
 
 class ComlogSink : public LogSink {
 public:

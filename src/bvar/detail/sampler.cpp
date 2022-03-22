@@ -1,11 +1,11 @@
 // Copyright (c) 2015 Baidu, Inc.
-// 
+//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
-// 
+//
 //     http://www.apache.org/licenses/LICENSE-2.0
-// 
+//
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -73,10 +73,10 @@ public:
     static double get_cumulated_time(void* arg) {
         return ((SamplerCollector*)arg)->_cumulated_time_us / 1000.0 / 1000.0;
     }
-    
+
 private:
     void run();
-    
+
     static void* sampling_thread(void* arg) {
         ((SamplerCollector*)arg)->run();
         return NULL;
@@ -93,9 +93,9 @@ void SamplerCollector::run() {
     butil::LinkNode<Sampler> root;
     int consecutive_nosleep = 0;
 #ifndef UNIT_TEST
-    PassiveStatus<double> cumulated_time(get_cumulated_time, this);
-    bvar::PerSecond<bvar::PassiveStatus<double> > usage(
-            "bvar_sampler_collector_usage", &cumulated_time, 10);
+    // PassiveStatus<double> cumulated_time(get_cumulated_time, this);
+    // bvar::PerSecond<bvar::PassiveStatus<double> > usage(
+    //        "bvar_sampler_collector_usage", &cumulated_time, 10);
 #endif
     while (!_stop) {
         int64_t abstime = butil::gettimeofday_us();
@@ -133,7 +133,7 @@ void SamplerCollector::run() {
         }
         if (slept) {
             consecutive_nosleep = 0;
-        } else {            
+        } else {
             if (++consecutive_nosleep >= WARN_NOSLEEP_THRESHOLD) {
                 consecutive_nosleep = 0;
                 LOG(WARNING) << "bvar is busy at sampling for "
