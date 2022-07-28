@@ -37,6 +37,8 @@
 #include "brpc/options.pb.h"              // ConnectionType
 #include "brpc/socket_id.h"               // SocketId
 #include "brpc/socket_message.h"          // SocketMessagePtr
+#include "brpc/ucp_ctx.h"
+#include "brpc/ucp_connection.h"
 
 namespace brpc {
 namespace policy {
@@ -178,6 +180,7 @@ class BAIDU_CACHELINE_ALIGNMENT/*note*/ Socket {
 friend class EventDispatcher;
 friend class InputMessenger;
 friend class Acceptor;
+friend class UcpAcceptor;
 friend class ConnectionsService;
 friend class SocketUser;
 friend class Stream;
@@ -498,6 +501,8 @@ public:
 
     bthread_keytable_pool_t* keytable_pool() const { return _keytable_pool; }
 
+    bool is_ucp_connection() const { return _remote_side.is_ucp(); }
+
 private:
     DISALLOW_COPY_AND_ASSIGN(Socket);
 
@@ -663,6 +668,8 @@ private:
     
     // [ Set in ResetFileDescriptor ] 
     butil::atomic<int> _fd;  // -1 when not connected.
+    UcpConnectionRef _ucp_conn;
+
     int _tos;                // Type of service which is actually only 8bits.
     int64_t _reset_fd_real_us; // When _fd was reset, in microseconds.
 

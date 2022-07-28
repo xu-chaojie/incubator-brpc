@@ -82,7 +82,8 @@
 // Use tcmalloc
 #if (defined(OS_WIN) || defined(OS_LINUX) || defined(OS_ANDROID)) && \
     !defined(NO_TCMALLOC)
-#define USE_TCMALLOC 1
+//#define USE_TCMALLOC 1
+#else
 #endif
 
 // Compiler detection.

@@ -52,6 +52,7 @@ ChannelOptions::ChannelOptions()
     , auth(NULL)
     , retry_policy(NULL)
     , ns_filter(NULL)
+    , use_ucp(false)
 {}
 
 ChannelSSLOptions* ChannelOptions::mutable_ssl_options() {
@@ -230,6 +231,8 @@ int Channel::Init(const char* server_addr_and_port,
             return -1;
         }
     }
+    if (options && options->use_ucp)
+        point.set_ucp();
     return InitSingle(point, server_addr_and_port, options);
 }
 
@@ -256,6 +259,8 @@ int Channel::Init(const char* server_addr, int port,
             return -1;
         }
     }
+    if (options && options->use_ucp)
+        point.set_ucp();
     return InitSingle(point, server_addr, options);
 }
 
@@ -297,6 +302,18 @@ int Channel::InitSingle(const butil::EndPoint& server_addr_and_port,
     if (InitChannelOptions(options) != 0) {
         return -1;
     }
+
+    if (options != NULL) {
+        if (options->use_ucp != server_addr_and_port.is_ucp()) {
+            LOG(ERROR) << "Inconsistent ucp setting, options.use_ucp="
+                       << options->use_ucp << ", server_addr_and_port.is_ucp()="
+                       << server_addr_and_port.is_ucp();
+            return -1;
+        }
+    } else {
+        _options.use_ucp = server_addr_and_port.is_ucp();
+    }
+
     if (_options.protocol == brpc::PROTOCOL_HTTP &&
         ::strncmp(raw_server_address, "https://", 8) == 0) {
         if (_options.mutable_ssl_options()->sni_name.empty()) {
@@ -315,8 +332,8 @@ int Channel::InitSingle(const butil::EndPoint& server_addr_and_port,
     if (CreateSocketSSLContext(_options, &ssl_ctx) != 0) {
         return -1;
     }
-    if (SocketMapInsert(SocketMapKey(server_addr_and_port, sig),
-                        &_server_id, ssl_ctx) != 0) {
+    SocketMapKey key(server_addr_and_port, sig);
+    if (SocketMapInsert(key, &_server_id, ssl_ctx) != 0) {
         LOG(ERROR) << "Fail to insert into SocketMap";
         return -1;
     }

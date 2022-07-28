@@ -23,6 +23,7 @@
 #include <netinet/in.h>                          // in_addr
 #include <iostream>                              // std::ostream
 #include "butil/containers/hash_tables.h"         // hashing functions
+#include "butil/sys_byteorder.h"
 
 namespace butil {
 const size_t UNIX_SOCKET_FILE_PATH_SIZE = 108;
@@ -80,17 +81,32 @@ const char* my_ip_cstr();
 
 // ipv4 + port
 struct EndPoint {
-    EndPoint() : ip(IP_ANY), port(0), socket_file("") {}
-    EndPoint(ip_t ip2, int port2) : ip(ip2), port(port2), socket_file("") {}
+    enum { IP, UCP, UNIX };
+    EndPoint() : ip(IP_ANY), port(0), kind(IP), socket_file("") {}
+    EndPoint(ip_t ip2, int port2) : ip(ip2), port(port2), kind(IP), socket_file("") {}
+    EndPoint(ip_t ip2, int port2, int k) : ip(ip2), port(port2), kind(k), socket_file("") {}
     explicit EndPoint(const sockaddr_in& in)
-        : ip(in.sin_addr), port(ntohs(in.sin_port)), socket_file("") {}
-    explicit EndPoint(const char* file) : ip(IP_ANY), port(0),
+        : ip(in.sin_addr), port(ntohs(in.sin_port)), kind(IP), socket_file("") {}
+    explicit EndPoint(const sockaddr_in& in, int k)
+        : ip(in.sin_addr), port(ntohs(in.sin_port)), kind(k), socket_file("") {}
+    explicit EndPoint(const char* file) : ip(IP_ANY), port(0), kind(UNIX),
                                             socket_file(file) {}
-    explicit EndPoint(const std::string& file) : ip(IP_ANY), port(0),
+    explicit EndPoint(const std::string& file) : ip(IP_ANY), port(0), kind(UNIX),
                                             socket_file(file) {}
     
+    bool is_ucp() const { return UCP == kind; }
+    void set_ucp() { kind = UCP; }
+    bool is_unix() const { return UNIX == kind; }
+    void set_unix() { kind = UNIX; }
+
     ip_t ip;
-    int port;
+#if ARCH_CPU_LITTLE_ENDIAN
+    unsigned short port;
+    unsigned short kind;
+#else
+    unsigned short kind;
+    unsigned short port;
+#endif
     std::string socket_file;
 };
 
@@ -176,6 +192,8 @@ inline std::ostream& operator<<(std::ostream& os, butil::ip_t ip) {
 namespace butil {
 // Overload operators for EndPoint in the same namespace due to ADL.
 inline bool operator<(EndPoint p1, EndPoint p2) {
+    if (p1.kind != p2.kind)
+        return p1.kind < p2.kind;
     return (p1.ip != p2.ip) ? (p1.ip < p2.ip) : (p1.port < p2.port);
 }
 inline bool operator>(EndPoint p1, EndPoint p2) {
@@ -188,7 +206,7 @@ inline bool operator>=(EndPoint p1, EndPoint p2) {
     return !(p1 < p2); 
 }
 inline bool operator==(EndPoint p1, EndPoint p2) {
-    return p1.ip == p2.ip && p1.port == p2.port;
+    return p1.kind == p2.kind && p1.ip == p2.ip && p1.port == p2.port;
 }
 inline bool operator!=(EndPoint p1, EndPoint p2) {
     return !(p1 == p2);

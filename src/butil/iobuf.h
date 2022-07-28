@@ -30,6 +30,7 @@
 #include "butil/macros.h"
 #include "butil/reader_writer.h"
 #include "butil/binary_printer.h"
+#include <ucp/api/ucp.h>
 
 // For IOBuf::appendv(const const_iovec*, size_t). The only difference of this
 // struct from iovec (defined in sys/uio.h) is that iov_base is `const void*'
@@ -170,6 +171,11 @@ public:
     // Cut into SSL channel `ssl'. Returns what `SSL_write' returns
     // and the ssl error code will be filled into `ssl_error'
     ssize_t cut_into_SSL_channel(struct ssl_st* ssl, int* ssl_error);
+
+    // Return number of total bytes
+    ssize_t fill_ucp_dt_iov(ucp_dt_iov_t *iov, int max_vec,
+                            int *real_nvec,
+                            size_t size_hint = 1024 * 1024);
 
     // Cut `count' number of `pieces' into the writer.
     // Returns bytes cut on success, -1 otherwise and errno is set.
@@ -446,6 +452,12 @@ public:
     // Returns total bytes read and the ssl error code will be filled into `ssl_error'
     ssize_t append_from_SSL_channel(struct ssl_st* ssl, int* ssl_error,
                                     size_t max_count = 1024*1024);
+
+    // Prepare inplace I/O buffer
+    ssize_t prepare_buffer(size_t max_count, int max_iov, ucp_dt_iov_t *vec, int *nvec);
+
+    // Append data from inplace I/O buffer
+    ssize_t append_from_buffer(size_t nr);
 
     // Remove all data inside and return cached blocks.
     void clear();

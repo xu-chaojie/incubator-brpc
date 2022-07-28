@@ -124,6 +124,7 @@ int DomainNamingService::GetServers(const char* dns_name,
         if (result->h_addrtype == AF_INET) {
             // Only fetch IPv4 addresses
             bcopy(result->h_addr_list[i], &point.ip, result->h_length);
+            // FIXME! should get rdma or tcp mode
             servers->push_back(ServerNode(point, std::string()));
         } else {
             LOG(WARNING) << "Found address of unsupported protocol="

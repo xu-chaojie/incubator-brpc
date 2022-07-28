@@ -38,6 +38,7 @@
 #include "brpc/global.h"
 #include "brpc/socket_map.h"                   // SocketMapList
 #include "brpc/acceptor.h"                     // Acceptor
+#include "brpc/ucp_acceptor.h"                 // UcpAcceptor
 #include "brpc/details/ssl_helper.h"           // CreateServerSSLContext
 #include "brpc/protocol.h"                     // ListProtocols
 #include "brpc/nshead_service.h"               // NsheadService
@@ -60,7 +61,7 @@
 #include "brpc/builtin/vars_service.h"         // VarsService
 #include "brpc/builtin/rpcz_service.h"         // RpczService
 #include "brpc/builtin/dir_service.h"          // DirService
-#include "brpc/builtin/pprof_service.h"        // PProfService
+//#include "brpc/builtin/pprof_service.h"        // PProfService
 #include "brpc/builtin/bthreads_service.h"     // BthreadsService
 #include "brpc/builtin/ids_service.h"          // IdsService
 #include "brpc/builtin/sockets_service.h"      // SocketsService
@@ -138,7 +139,10 @@ ServerOptions::ServerOptions()
     , has_builtin_services(true)
     , http_master_service(NULL)
     , health_reporter(NULL)
-    , rtmp_service(NULL) {
+    , rtmp_service(NULL)
+    , enable_ucp(false)
+    , ucp_address("0.0.0.0")
+    , ucp_port(0) {
     if (s_ncore > 0) {
         num_threads = s_ncore + 1;
     }
@@ -382,6 +386,7 @@ Server::Server(ProfilerLinker)
     , _failed_to_set_max_concurrency_of_method(false)
     , _am(NULL)
     , _internal_am(NULL)
+    , _am_ucp(NULL)
     , _first_service(NULL)
     , _tab_info_list(NULL)
     , _global_restful_map(NULL)
@@ -417,6 +422,9 @@ Server::~Server() {
     _am = NULL;
     delete _internal_am;
     _internal_am = NULL;
+
+    delete _am_ucp;
+    _am_ucp = NULL;
 
     delete _tab_info_list;
     _tab_info_list = NULL;
@@ -455,10 +463,10 @@ int Server::AddBuiltinServices() {
         LOG(ERROR) << "Fail to add RpczService";
         return -1;
     }
-    if (AddBuiltinService(new (std::nothrow) HotspotsService)) {
-        LOG(ERROR) << "Fail to add HotspotsService";
-        return -1;
-    }
+//    if (AddBuiltinService(new (std::nothrow) HotspotsService)) {
+ //        LOG(ERROR) << "Fail to add HotspotsService";
+ //       return -1;
+ //   }
     if (AddBuiltinService(new (std::nothrow) IndexService)) {
         LOG(ERROR) << "Fail to add IndexService";
         return -1;
@@ -502,10 +510,10 @@ int Server::AddBuiltinServices() {
     }
 #endif
 
-    if (AddBuiltinService(new (std::nothrow) PProfService)) {
-        LOG(ERROR) << "Fail to add PProfService";
-        return -1;
-    }
+//    if (AddBuiltinService(new (std::nothrow) PProfService)) {
+//        LOG(ERROR) << "Fail to add PProfService";
+//        return -1;
+//    }
     if (FLAGS_enable_dir_service &&
         AddBuiltinService(new (std::nothrow) DirService)) {
         LOG(ERROR) << "Fail to add DirService";
@@ -539,6 +547,62 @@ bool is_http_protocol(const char* name) {
         return false;
     }
     return strcmp(name, "http") == 0 || strcmp(name, "h2") == 0;
+}
+
+UcpAcceptor* Server::BuildUcpAcceptor() {
+    std::set<std::string> whitelist;
+    for (butil::StringSplitter sp(_options.enabled_protocols.c_str(), ' ');
+         sp; ++sp) {
+        std::string protocol(sp.field(), sp.length());
+        whitelist.insert(protocol);
+    }
+    const bool has_whitelist = !whitelist.empty();
+    UcpAcceptor* acceptor = new (std::nothrow) UcpAcceptor(_keytable_pool);
+    if (NULL == acceptor) {
+        LOG(ERROR) << "Fail to new Acceptor";
+        return NULL;
+    }
+    InputMessageHandler handler;
+    std::vector<Protocol> protocols;
+    ListProtocols(&protocols);
+    for (size_t i = 0; i < protocols.size(); ++i) {
+        if (protocols[i].process_request == NULL) {
+            // The protocol does not support server-side.
+            continue;
+        }
+        if (has_whitelist &&
+            !is_http_protocol(protocols[i].name) &&
+            !whitelist.erase(protocols[i].name)) {
+            // the protocol is not allowed to serve.
+            RPC_VLOG << "Skip protocol=" << protocols[i].name;
+            continue;
+        }
+        // `process_request' is required at server side
+        handler.parse = protocols[i].parse;
+        handler.process = protocols[i].process_request;
+        handler.verify = protocols[i].verify;
+        handler.arg = this;
+        handler.name = protocols[i].name;
+        if (acceptor->AddHandler(handler) != 0) {
+            LOG(ERROR) << "Fail to add handler into Acceptor("
+                       << acceptor << ')';
+            delete acceptor;
+            return NULL;
+        }
+    }
+    if (!whitelist.empty()) {
+        std::ostringstream err;
+        err << "ServerOptions.enabled_protocols has unknown protocols=`";
+        for (std::set<std::string>::const_iterator it = whitelist.begin();
+             it != whitelist.end(); ++it) {
+            err << *it << ' ';
+        }
+        err << '\'';
+        delete acceptor;
+        LOG(ERROR) << err.str();
+        return NULL;
+    }
+    return acceptor;
 }
 
 Acceptor* Server::BuildAcceptor() {
@@ -721,6 +785,14 @@ int Server::Init(const ServerOptions *opt) {
         // Always reset to default options explicitly since `_options'
         // may be the options for the last run or even bad options
         _options = ServerOptions();
+    }
+
+    if (_options.enable_ucp) {
+        if (str2endpoint(_options.ucp_address.c_str(), _options.ucp_port, &_ucp_point) != 0) {
+            LOG(ERROR) << "can not parse ucp_address";
+            return -1;
+        }
+        _ucp_point.set_ucp();
     }
 
     if (!_options.h2_settings.IsValid(true/*log_error*/)) {
@@ -1034,6 +1106,11 @@ int Server::StartInternal(const butil::ip_t& ip,
         }
     }
     
+    if (_options.enable_ucp) {
+        _am_ucp = BuildUcpAcceptor();
+        _am_ucp->StartAccept(_ucp_point, _options.idle_timeout_sec);
+    }
+
     PutPidFileIfNeeded();
 
     // Launch _derivative_thread.

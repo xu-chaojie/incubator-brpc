@@ -67,6 +67,11 @@ if(${GFLAGS_NS} STREQUAL "GFLAGS_NAMESPACE")
     )
 endif()
 
+set(UCX_PATH "/usr/local/ucx" CACHE PATH "ucx installation path")
+
+include_directories(${UCX_PATH}/include)
+link_directories(${UCX_PATH}/lib)
+
 include_directories(
     ${PROJECT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_BINARY_DIR}
@@ -155,6 +160,7 @@ include_directories(
         ${OPENSSL_INCLUDE_DIR}
         )
 
+set(UCX_LIB ucp uct ucm ucs ucs_signal)
 set(DYNAMIC_LIB
     ${GFLAGS_LIBRARY}
     ${PROTOBUF_LIBRARIES}
@@ -165,6 +171,7 @@ set(DYNAMIC_LIB
     ${THRIFTNB_LIB}
     ${OPENSSL_LIBRARIES}
     ${OPENSSL_CRYPTO_LIBRARY}
+    ${UCX_LIB}
     dl
     z
     )

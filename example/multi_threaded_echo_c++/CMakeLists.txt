@@ -68,8 +68,8 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
 endif()
 
 set(CMAKE_CPP_FLAGS "${DEFINE_CLOCK_GETTIME} -DGFLAGS_NS=${GFLAGS_NS}")
-set(CMAKE_CXX_FLAGS "${CMAKE_CPP_FLAGS} -DNDEBUG -O2 -D__const__= -pipe -W -Wall -Wno-unused-parameter -fPIC -fno-omit-frame-pointer")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DBRPC_ENABLE_CPU_PROFILER")
+set(CMAKE_CXX_FLAGS "${CMAKE_CPP_FLAGS} -DNDEBUG -D__const__= -pipe -W -Wall -Wno-unused-parameter -fPIC -fno-omit-frame-pointer")
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DBRPC_ENABLE_CPU_PROFILER")
 
 if(CMAKE_VERSION VERSION_LESS "3.1.3")
     if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
@@ -100,7 +100,11 @@ if (NOT CRYPTO_LIB)
     message(FATAL_ERROR "Fail to find crypto")
 endif()
 
+include_directories(/usr/local/ucx/include)
+link_directories(/usr/local/ucx/lib)
+set(UCX_LIB ucp uct ucm ucs ucs_signal)
 set(DYNAMIC_LIB
+    ${UCX_LIB}
     ${CMAKE_THREAD_LIBS_INIT}
     ${GFLAGS_LIBRARY}
     ${PROTOBUF_LIBRARIES}
@@ -129,5 +133,5 @@ endif()
 add_executable(multi_threaded_echo_client client.cpp ${PROTO_SRC} ${PROTO_HEADER})
 add_executable(multi_threaded_echo_server server.cpp ${PROTO_SRC} ${PROTO_HEADER})
 
-target_link_libraries(multi_threaded_echo_client ${BRPC_LIB} ${DYNAMIC_LIB} ${GPERFTOOLS_LIBRARIES})
-target_link_libraries(multi_threaded_echo_server ${BRPC_LIB} ${DYNAMIC_LIB} ${GPERFTOOLS_LIBRARIES})
+target_link_libraries(multi_threaded_echo_client ${BRPC_LIB} ${DYNAMIC_LIB}) # ${GPERFTOOLS_LIBRARIES})
+target_link_libraries(multi_threaded_echo_server ${BRPC_LIB} ${DYNAMIC_LIB}) # ${GPERFTOOLS_LIBRARIES})

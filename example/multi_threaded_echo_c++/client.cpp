@@ -30,11 +30,12 @@ DEFINE_string(protocol, "baidu_std", "Protocol type. Defined in src/brpc/options
 DEFINE_string(connection_type, "", "Connection type. Available values: single, pooled, short");
 DEFINE_string(server, "0.0.0.0:8002", "IP Address of server");
 DEFINE_string(load_balancer, "", "The algorithm for load balancing");
-DEFINE_int32(timeout_ms, 100, "RPC timeout in milliseconds");
+DEFINE_int32(timeout_ms, 1000, "RPC timeout in milliseconds");
 DEFINE_int32(max_retry, 3, "Max retries(not including the first RPC)"); 
 DEFINE_bool(dont_fail, false, "Print fatal when some call failed");
 DEFINE_bool(enable_ssl, false, "Use SSL connection");
 DEFINE_int32(dummy_port, -1, "Launch dummy server at this port");
+DEFINE_bool(use_ucp, false, "Use ucp connection");
 
 std::string g_request;
 std::string g_attachment;
@@ -98,6 +99,7 @@ int main(int argc, char* argv[]) {
     options.connect_timeout_ms = std::min(FLAGS_timeout_ms / 2, 100);
     options.timeout_ms = FLAGS_timeout_ms;
     options.max_retry = FLAGS_max_retry;
+    options.use_ucp = FLAGS_use_ucp;
     if (channel.Init(FLAGS_server.c_str(), FLAGS_load_balancer.c_str(), &options) != 0) {
         LOG(ERROR) << "Fail to initialize channel";
         return -1;

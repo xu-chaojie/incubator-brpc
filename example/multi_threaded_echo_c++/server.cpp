@@ -27,6 +27,9 @@ DEFINE_int32(logoff_ms, 2000, "Maximum duration of server's LOGOFF state "
              "(waiting for client to close connection before server stops)");
 DEFINE_int32(max_concurrency, 0, "Limit of request processing in parallel");
 DEFINE_int32(internal_port, -1, "Only allow builtin services at this port");
+DEFINE_bool(enable_ucp, true, "Enable ucp port");
+DEFINE_string(ucp_address, "0.0.0.0", "Ucp listener address");
+DEFINE_int32(ucp_port, 13339, "Ucp listener port");
 
 namespace example {
 // Your implementation of EchoService
@@ -87,6 +90,9 @@ int main(int argc, char* argv[]) {
     options.idle_timeout_sec = FLAGS_idle_timeout_s;
     options.max_concurrency = FLAGS_max_concurrency;
     options.internal_port = FLAGS_internal_port;
+    options.enable_ucp = FLAGS_enable_ucp;
+    options.ucp_address = FLAGS_ucp_address;
+    options.ucp_port = FLAGS_ucp_port;
     if (server.Start(FLAGS_port, &options) != 0) {
         LOG(ERROR) << "Fail to start EchoServer";
         return -1;

@@ -43,6 +43,7 @@
 namespace brpc {
 
 class Acceptor;
+class UcpAcceptor;
 class MethodStatus;
 class NsheadService;
 class ThriftService;
@@ -231,6 +232,15 @@ struct ServerOptions {
 
     // Customize parameters of HTTP2, defined in http2.h
     H2Settings h2_settings;
+
+    // Enable ucp listener
+    bool enable_ucp;
+
+    // Ucp listener ip address
+    std::string ucp_address;
+
+    // Ucp listener port
+    uint16_t ucp_port;
 
 private:
     // SSLOptions is large and not often used, allocate it on heap to
@@ -549,6 +559,8 @@ friend class Controller;
 
     int ListenInternalPort();
 
+    UcpAcceptor* BuildUcpAcceptor();
+
     int StartInternal(const butil::ip_t& ip,
                       const PortRange& port_range,
                       const ServerOptions *opt);
@@ -627,6 +639,7 @@ friend class Controller;
     bool _failed_to_set_max_concurrency_of_method;
     Acceptor* _am;
     Acceptor* _internal_am;
+    UcpAcceptor* _am_ucp;
     
     // Use method->full_name() as key
     MethodMap _method_map;
@@ -671,6 +684,7 @@ friend class Controller;
     mutable bvar::Adder<int64_t> _nerror_bvar;
     mutable int32_t BAIDU_CACHELINE_ALIGNMENT _concurrency;
 
+    butil::EndPoint _ucp_point;
 };
 
 // Get the data attached to current searching thread. The data is created by

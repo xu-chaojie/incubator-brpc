@@ -52,6 +52,8 @@
 #if defined(OS_MACOSX)
 #include <sys/event.h>
 #endif
+#include "brpc/ucp_ctx.h"
+#include "brpc/ucp_cm.h"
 
 namespace bthread {
 size_t __attribute__((weak))
@@ -548,8 +550,22 @@ int Socket::ResetFileDescriptor(int fd) {
         return 0;
     }
     // OK to fail, non-socket fd does not support this.
+    // FIXME : UCP worker event fd will be failed
     if (butil::get_local_side(fd, &_local_side) != 0) {
         _local_side = butil::EndPoint();
+    }
+    _local_side.kind = _remote_side.kind;
+
+    // Skip following settings for ucp worker event fd, it was set
+    // by ucx library.
+    if (is_ucp_connection()) {
+        _ucp_conn = get_or_create_ucp_cm()->GetConnection(fd);
+        if (!_ucp_conn) {
+            LOG(ERROR) << "Get not get ucp connection, fd = " << fd;
+        } else {
+            _ucp_conn->SetSocketId(_this_id);
+        }
+        goto finally;
     }
 
     // FIXME : close-on-exec should be set by new syscalls or worse: set right
@@ -588,6 +604,7 @@ int Socket::ResetFileDescriptor(int fd) {
         }
     }
 
+finally:
     if (_on_edge_triggered_events) {
         if (GetGlobalEventDispatcher(fd).AddConsumer(id(), fd) != 0) {
             PLOG(ERROR) << "Fail to add SocketId=" << id() 
@@ -615,6 +632,7 @@ int Socket::Create(const SocketOptions& options, SocketId* id) {
     m->_keytable_pool = options.keytable_pool;
     m->_tos = 0;
     m->_remote_side = options.remote_side;
+    m->_local_side.kind = options.remote_side.kind;
     m->_on_edge_triggered_events = options.on_edge_triggered_events;
     m->_user = options.user;
     m->_conn = options.conn;
@@ -716,7 +734,11 @@ int Socket::WaitAndReset(int32_t expected_nref) {
             s_vars->channel_conn << -1;
         }
     }
+
+    int kind = _local_side.kind;
     _local_side = butil::EndPoint();
+    _local_side.kind = kind;
+
     if (_ssl_session) {
         SSL_free(_ssl_session);
         _ssl_session = NULL;
@@ -1092,6 +1114,8 @@ void Socket::OnRecycle() {
     delete _stream_set;
     _stream_set = NULL;
 
+    _ucp_conn.reset();
+
     const SocketId asid = _agent_socket_id.load(butil::memory_order_relaxed);
     if (asid != INVALID_SOCKET_ID) {
         SocketUniquePtr ptr;
@@ -1208,44 +1232,50 @@ int Socket::Connect(const timespec* abstime,
     }
     butil::fd_guard sockfd;
 
-    if (butil::is_unix_sock_endpoint(remote_side())) {
-        sockfd.reset(socket(AF_LOCAL, SOCK_STREAM, 0));
+    if (is_ucp_connection()) {
+        _ssl_state = SSL_OFF; // FIXME
+        sockfd.reset(get_or_create_ucp_cm()->Connect(_remote_side));
     } else {
-        sockfd.reset(socket(AF_INET, SOCK_STREAM, 0));
-    }
+        if (butil::is_unix_sock_endpoint(remote_side())) {
+            sockfd.reset(socket(AF_LOCAL, SOCK_STREAM, 0));
+        } else {
+            sockfd.reset(socket(AF_INET, SOCK_STREAM, 0));
+        }
 
-    if (sockfd < 0) {
-        PLOG(ERROR) << "Fail to create socket";
-        return -1;
-    }
-    CHECK_EQ(0, butil::make_close_on_exec(sockfd));
-    // We need to do async connect (to manage the timeout by ourselves).
-    CHECK_EQ(0, butil::make_non_blocking(sockfd));
+        if (sockfd < 0) {
+            PLOG(ERROR) << "Fail to create socket";
+            return -1;
+        }
+        CHECK_EQ(0, butil::make_close_on_exec(sockfd));
+        // We need to do async connect (to manage the timeout by ourselves).
+        CHECK_EQ(0, butil::make_non_blocking(sockfd));
 
-    int rc;
+        int rc;
 
-    if (butil::is_unix_sock_endpoint(remote_side())) {
-        struct sockaddr_un serv_addr;
-        bzero((char*)&serv_addr, sizeof(serv_addr));
-        serv_addr.sun_family = AF_LOCAL;
-        snprintf(serv_addr.sun_path, sizeof(serv_addr.sun_path),
+        if (butil::is_unix_sock_endpoint(remote_side())) {
+            struct sockaddr_un serv_addr;
+            bzero((char*)&serv_addr, sizeof(serv_addr));
+            serv_addr.sun_family = AF_LOCAL;
+            snprintf(serv_addr.sun_path, sizeof(serv_addr.sun_path),
                         "%s", remote_side().socket_file.c_str());
-        rc =  ::connect(
-            sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
-    } else {
-        struct sockaddr_in serv_addr;
-        bzero((char*)&serv_addr, sizeof(serv_addr));
-        serv_addr.sin_family = AF_INET;
-        serv_addr.sin_addr = remote_side().ip;
-        serv_addr.sin_port = htons(remote_side().port);
-        rc = ::connect(
-            sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
+            rc =  ::connect(
+                sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
+        } else {
+            struct sockaddr_in serv_addr;
+            bzero((char*)&serv_addr, sizeof(serv_addr));
+            serv_addr.sin_family = AF_INET;
+            serv_addr.sin_addr = remote_side().ip;
+            serv_addr.sin_port = htons(remote_side().port);
+            rc = ::connect(
+                sockfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
+        }
+
+        if (rc != 0 && errno != EINPROGRESS) {
+            PLOG(WARNING) << "Fail to connect to " << remote_side();
+            return -1;
+        }
     }
 
-    if (rc != 0 && errno != EINPROGRESS) {
-        PLOG(WARNING) << "Fail to connect to " << remote_side();
-        return -1;
-    }
     if (on_connect) {
         EpollOutRequest* req = new(std::nothrow) EpollOutRequest;
         if (req == NULL) {
@@ -1314,6 +1344,10 @@ int Socket::Connect(const timespec* abstime,
 
 int Socket::CheckConnected(int sockfd) {    
     if (sockfd == STREAM_FAKE_FD) {
+        return 0;
+    }
+    // FIXME CheckConnected doesn't work with ucp connectin yet.
+    if (is_ucp_connection()) {
         return 0;
     }
     int err = 0;
@@ -1460,6 +1494,10 @@ static void* RunClosure(void* arg) {
 int Socket::KeepWriteIfConnected(int fd, int err, void* data) {
     WriteRequest* req = static_cast<WriteRequest*>(data);
     Socket* s = req->socket;
+
+    CHECK((!s->is_ucp_connection() || s->ssl_state() == SSL_OFF))
+        << "ucp can not handle ssl";
+
     if (err == 0 && s->ssl_state() == SSL_CONNECTING) {
         // Run ssl connect in a new bthread to avoid blocking
         // the current bthread (thus blocking the EventDispatcher)
@@ -1663,7 +1701,10 @@ int Socket::StartWrite(WriteRequest* req, const WriteOptions& opt) {
         butil::IOBuf* data_arr[1] = { &req->data };
         nw = _conn->CutMessageIntoFileDescriptor(fd(), data_arr, 1);
     } else {
-        nw = req->data.cut_into_file_descriptor(fd());
+        if (is_ucp_connection())
+            nw = _ucp_conn->Write(&req->data);
+        else
+            nw = req->data.cut_into_file_descriptor(fd());
     }
     if (nw < 0) {
         // RTMP may return EOVERCROWDED
@@ -1745,6 +1786,7 @@ void* Socket::KeepWrite(void* void_arg) {
         // Update(8/15/2017): Not working, performance downgraded.
         //if (nw <= 0 || req->data.empty()/*note*/) {
         if (nw <= 0) {
+            LOG(INFO) << "nw <= 0";
             s_vars->nwaitepollout << 1;
             bool pollin = (s->_on_edge_triggered_events != NULL);
             // NOTE: Waiting epollout within timeout is a must to force
@@ -1792,10 +1834,16 @@ ssize_t Socket::DoWrite(WriteRequest* req) {
     if (ssl_state() == SSL_OFF) {
         // Write IOBuf in the batch array into the fd.
         if (_conn) {
+            LOG(FATAL) << "has _conn!!!";
             return _conn->CutMessageIntoFileDescriptor(fd(), data_list, ndata);
         } else {
-            ssize_t nw = butil::IOBuf::cut_multiple_into_file_descriptor(
-                fd(), data_list, ndata);
+            ssize_t nw;
+            if (is_ucp_connection()) {
+                nw = _ucp_conn->Write(data_list, ndata);
+            } else {
+                nw = butil::IOBuf::cut_multiple_into_file_descriptor(
+                    fd(), data_list, ndata);
+            }
             return nw;
         }
     }
@@ -1917,7 +1965,10 @@ int Socket::SSLHandshake(int fd, bool server_mode) {
 ssize_t Socket::DoRead(size_t size_hint) {
     if (ssl_state() == SSL_UNKNOWN) {
         int error_code = 0;
-        _ssl_state = DetectSSLState(fd(), &error_code);
+        if (is_ucp_connection())
+            _ssl_state = SSL_OFF;
+        else
+            _ssl_state = DetectSSLState(fd(), &error_code);
         switch (ssl_state()) {
         case SSL_UNKNOWN:
             if (error_code == 0) {  // EOF
@@ -1944,6 +1995,8 @@ ssize_t Socket::DoRead(size_t size_hint) {
     }
     // _ssl_state has been set
     if (ssl_state() == SSL_OFF) {
+        if (is_ucp_connection())
+            return _ucp_conn->Read(&_read_buf, size_hint);
         return _read_buf.append_from_file_descriptor(fd(), size_hint);
     }
 

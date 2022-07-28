@@ -190,7 +190,7 @@ int str2endpoint(const char* str, EndPoint* point) {
     }
     ++i;
     char* end = NULL;
-    point->port = strtol(str + i, &end, 10);
+    int port = strtol(str + i, &end, 10);
     if (end == str + i) {
         return -1;
     } else if (*end) {
@@ -199,9 +199,10 @@ int str2endpoint(const char* str, EndPoint* point) {
             return -1;
         }
     }
-    if (point->port < 0 || point->port > 65535) {
+    if (port < 0 || port > 65535) {
         return -1;
     }
+    point->port = port;
     return 0;
 }
 
@@ -235,7 +236,7 @@ int hostname2endpoint(const char* str, EndPoint* point) {
         ++i;
     }
     char* end = NULL;
-    point->port = strtol(str + i, &end, 10);
+    int port = strtol(str + i, &end, 10);
     if (end == str + i) {
         return -1;
     } else if (*end) {
@@ -244,9 +245,10 @@ int hostname2endpoint(const char* str, EndPoint* point) {
             return -1;
         }
     }
-    if (point->port < 0 || point->port > 65535) {
+    if (port < 0 || port > 65535) {
         return -1;
     }
+    point->port = port;
     return 0;
 }
 

@@ -934,6 +934,31 @@ int IOBuf::_cut_by_delim(IOBuf* out, char const* dbegin, size_t ndelim) {
     return -1;
 }
 
+ssize_t IOBuf::fill_ucp_dt_iov(ucp_dt_iov_t *vec, int max_vec,
+    int *real_nvec, size_t size_hint) {
+    if (empty()) {
+        if (real_nvec)
+            *real_nvec = 0;
+        return 0;
+    }
+
+    const int nref = std::min((int)_ref_num(), max_vec);
+    int nvec = 0;
+    size_t cur_len = 0;
+
+    do {
+        IOBuf::BlockRef const& r = _ref_at(nvec);
+        vec[nvec].buffer = r.block->data + r.offset;
+        vec[nvec].length = r.length;
+        ++nvec;
+        cur_len += r.length;
+    } while (nvec < nref && cur_len < size_hint);
+
+    if (real_nvec)
+        *real_nvec = nvec;
+    return cur_len;
+}
+
 // Since cut_into_file_descriptor() allocates iovec on stack, IOV_MAX=1024
 // is too large(in the worst case) for bthreads with small stacks.
 static const size_t IOBUF_IOV_MAX = 256;
@@ -1617,6 +1642,57 @@ ssize_t IOPortal::pappend_from_file_descriptor(
         return nr;
     }
 
+    size_t total_len = nr;
+    do {
+        const size_t len = std::min(total_len, _block->left_space());
+        total_len -= len;
+        const IOBuf::BlockRef r = { _block->size, (uint32_t)len, _block };
+        _push_back_ref(r);
+        _block->size += len;
+        if (_block->full()) {
+            Block* const saved_next = _block->portal_next;
+            _block->dec_ref();  // _block may be deleted
+            _block = saved_next;
+        }
+    } while (total_len);
+    return nr;
+}
+
+ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, ucp_dt_iov_t *vec, int *_nvec)
+{
+    int &nvec = *_nvec;
+    size_t space = 0;
+    Block* prev_p = NULL;
+    Block* p = _block;
+    nvec = 0;
+    // Prepare at most max_iov blocks or space of blocks >= max_count
+    do {
+        if (p == NULL) {
+            p = iobuf::acquire_tls_block();
+            if (BAIDU_UNLIKELY(!p)) {
+                errno = ENOMEM;
+                return -1;
+            }
+            if (prev_p != NULL) {
+                prev_p->portal_next = p;
+            } else {
+                _block = p;
+            }
+        }
+        vec[nvec].buffer = p->data + p->size;
+        vec[nvec].length = std::min(p->left_space(), max_count - space);
+        space += vec[nvec].length;
+        ++nvec;
+        if (space >= max_count || nvec >= max_iov) {
+            break;
+        }
+        prev_p = p;
+        p = p->portal_next;
+    } while (1);
+    return space;
+}
+
+ssize_t IOPortal::append_from_buffer(size_t nr) {
     size_t total_len = nr;
     do {
         const size_t len = std::min(total_len, _block->left_space());

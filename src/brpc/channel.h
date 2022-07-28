@@ -128,6 +128,9 @@ struct ChannelOptions {
     // Default: ""
     std::string connection_group;
 
+    // Use ucp transport
+    bool use_ucp;
+
 private:
     // SSLOptions is large and not often used, allocate it on heap to
     // prevent ChannelOptions from being bloated in most cases.

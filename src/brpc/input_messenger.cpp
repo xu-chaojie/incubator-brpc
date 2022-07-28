@@ -422,10 +422,8 @@ int InputMessenger::Create(const butil::EndPoint& remote_side,
                            SocketId* id) {
     SocketOptions options;
     options.remote_side = remote_side;
-    options.user = this;
-    options.on_edge_triggered_events = OnNewMessages;
     options.health_check_interval_s = health_check_interval_s;
-    return Socket::Create(options, id);
+    return this->Create(options, id);
 }
 
 int InputMessenger::Create(SocketOptions options, SocketId* id) {
