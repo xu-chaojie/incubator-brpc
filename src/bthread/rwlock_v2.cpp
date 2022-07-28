@@ -362,13 +362,13 @@ bthread_rwlock_unlock(bthread_rwlock_t *rwlock)
     }
 
     if (q != NULL) {
-        //bthread_mutex_lock(&rwlock->rw_mutex);
+        bthread_mutex_lock(&rwlock->rw_mutex);
+        bthread_mutex_unlock(&rwlock->rw_mutex);
         Barrier_AtomicIncrement((Atomic32 *)q, 1);
         if (broadcast)
             butex_wake_all(q);
         else
             butex_wake(q);
-        //bthread_mutex_unlock(&rwlock->rw_mutex);
     }
 
     return (0);
