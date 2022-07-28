@@ -55,7 +55,7 @@ void run_worker_startfn() {
 void* TaskControl::worker_thread(void* arg) {
     run_worker_startfn();    
 #ifdef BAIDU_INTERNAL
-    logging::ComlogInitializer comlog_initializer;
+    butil::logging::ComlogInitializer comlog_initializer;
 #endif
     
     TaskControl* c = static_cast<TaskControl*>(arg);

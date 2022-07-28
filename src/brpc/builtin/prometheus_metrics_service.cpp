@@ -17,6 +17,8 @@
 #include <vector>
 #include <iomanip>
 #include <map>
+#include <string>
+#include <json2pb/rapidjson.h>
 #include "brpc/controller.h"                // Controller
 #include "brpc/server.h"                    // Server
 #include "brpc/closure_guard.h"             // ClosureGuard
@@ -55,6 +57,8 @@ private:
     // Return true iff name ends with suffix output by LatencyRecorder.
     bool DumpLatencyRecorderSuffix(const butil::StringPiece& name,
                                    const butil::StringPiece& desc);
+    bool DumpStatusJsonString(const std::string& name,
+                              const std::string& desc);
 
     // 6 is the number of bvars in LatencyRecorder that indicating percentiles
     static const int NPERCENTILES = 6;
@@ -80,8 +84,12 @@ bool PrometheusMetricsDumper::dump(const std::string& name,
                                    const butil::StringPiece& desc) {
     if (!desc.empty() && desc[0] == '"') {
         // there is no necessary to monitor string in prometheus
+        std::string strdesc;
+        desc.CopyToString(&strdesc);
+        DumpStatusJsonString(name, strdesc);
         return true;
     }
+
     if (DumpLatencyRecorderSuffix(name, desc)) {
         // Has encountered name with suffix exposed by LatencyRecorder,
         // Leave it to DumpLatencyRecorderSuffix to output Summary.
@@ -171,6 +179,45 @@ bool PrometheusMetricsDumper::DumpLatencyRecorderSuffix(
          << strtoll(si->latency_avg.data(), NULL, 10) *
                 strtoll(si->count.data(), NULL, 10) << '\n'
          << si->metric_name << "_count " << si->count << '\n';
+    return true;
+}
+
+bool PrometheusMetricsDumper::DumpStatusJsonString(
+    const std::string& name, const std::string& desc) {
+    // 如果不是json格式，返回false, 是json格式则print
+    BUTIL_RAPIDJSON_NAMESPACE::Document d;
+    if (desc.size() == 2) {
+        return false;
+    }
+    if (d.Parse(desc.substr(1, desc.size()-2).c_str()).HasParseError()
+        || !d.IsObject()) {
+        return false;
+    }
+    std::string tmpos = std::string("# HELP ") + name + std::string("\n") +
+        std::string("# TYPE ") + name + std::string(" gauge\n") +
+        name + std::string("{");
+
+    // 遍历json并打印
+    int count = 0;
+    BUTIL_RAPIDJSON_NAMESPACE::Value::MemberIterator it = d.MemberBegin();
+    while (it != d.MemberEnd()) {
+        count++;
+        if (!it->value.IsString()) {
+            it++;
+            return false;
+        }
+
+        if (count == d.MemberCount()) {
+            tmpos += it->name.GetString() + std::string("=\"") +
+                it->value.GetString() + std::string("\"}");
+        } else {
+            tmpos += it->name.GetString() + std::string("=\"") +
+                it->value.GetString() + std::string("\",");
+        }
+        it++;
+    }
+    tmpos += std::string(" 0\n");
+    *_os << tmpos;
     return true;
 }
 

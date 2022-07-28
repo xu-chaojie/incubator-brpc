@@ -110,7 +110,7 @@ int UserCodeBackupPool::Init() {
 void UserCodeBackupPool::UserCodeRunningLoop() {
     bthread::run_worker_startfn();
 #ifdef BAIDU_INTERNAL
-    logging::ComlogInitializer comlog_initializer;
+    butil::logging::ComlogInitializer comlog_initializer;
 #endif
     
     int64_t last_time = butil::cpuwide_time_us();

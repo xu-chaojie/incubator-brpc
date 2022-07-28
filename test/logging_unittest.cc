@@ -10,6 +10,7 @@
 
 #if !BRPC_WITH_GLOG
 
+namespace butil {
 namespace logging {
 DECLARE_bool(crash_on_fatal_log);
 DECLARE_int32(v);
@@ -46,12 +47,12 @@ class LogStateSaver {
 class LoggingTest : public testing::Test {
 public:
     virtual void SetUp() {
-        _old_crash_on_fatal_log = ::logging::FLAGS_crash_on_fatal_log;
-        ::logging::FLAGS_crash_on_fatal_log = true;
+        _old_crash_on_fatal_log = ::butil::logging::FLAGS_crash_on_fatal_log;
+        ::butil::logging::FLAGS_crash_on_fatal_log = true;
     }
     virtual void TearDown() {
-        ::logging::FLAGS_crash_on_fatal_log = _old_crash_on_fatal_log;
-        if (::logging::FLAGS_v != 0) {
+        ::butil::logging::FLAGS_crash_on_fatal_log = _old_crash_on_fatal_log;
+        if (::butil::logging::FLAGS_v != 0) {
             // Clear -verbose to avoid affecting other tests.
             ASSERT_FALSE(GFLAGS_NS::SetCommandLineOption("v", "0").empty());
             ASSERT_FALSE(GFLAGS_NS::SetCommandLineOption("vmodule", "").empty());
@@ -147,7 +148,7 @@ TEST_F(LoggingTest, DcheckReleaseBehavior) {
 }
 
 TEST_F(LoggingTest, streaming_log_sanity) {
-    ::logging::FLAGS_crash_on_fatal_log = false;
+    ::butil::logging::FLAGS_crash_on_fatal_log = false;
 
     LOG(WARNING) << 1 << 1.1f << 2l << "apple" << noflush;
     LOG(WARNING) << " orange" << noflush;
@@ -195,13 +196,13 @@ TEST_F(LoggingTest, streaming_log_sanity) {
 }
 
 TEST_F(LoggingTest, log_at) {
-    ::logging::StringSink log_str;
-    ::logging::LogSink* old_sink = ::logging::SetLogSink(&log_str);
+    ::butil::logging::StringSink log_str;
+    ::butil::logging::LogSink* old_sink = ::butil::logging::SetLogSink(&log_str);
     LOG_AT(WARNING, "specified_file.cc", 12345) << "file/line is specified";
     // the file:line part should be using the argument given by us.
     ASSERT_NE(std::string::npos, log_str.find("specified_file.cc:12345"));
     // restore the old sink.
-    ::logging::SetLogSink(old_sink);
+    ::butil::logging::SetLogSink(old_sink);
 }
 
 #define VLOG_NE(verbose_level) VLOG(verbose_level) << noflush
@@ -210,7 +211,7 @@ TEST_F(LoggingTest, log_at) {
     VLOG2(virtual_path, verbose_level) << noflush
 
 TEST_F(LoggingTest, vlog_sanity) {
-    ::logging::FLAGS_crash_on_fatal_log = false;
+    ::butil::logging::FLAGS_crash_on_fatal_log = false;
 
     EXPECT_FALSE(GFLAGS_NS::SetCommandLineOption("v", "1").empty());
     
@@ -312,7 +313,7 @@ TEST_F(LoggingTest, vlog_sanity) {
 }
 
 TEST_F(LoggingTest, check) {
-    ::logging::FLAGS_crash_on_fatal_log = false;
+    ::butil::logging::FLAGS_crash_on_fatal_log = false;
 
     CHECK(1 < 2);
     CHECK(1 > 2);
@@ -349,7 +350,7 @@ int foo(int* p) {
 }
 
 TEST_F(LoggingTest, debug_level) {
-    ::logging::FLAGS_crash_on_fatal_log = false;
+    ::butil::logging::FLAGS_crash_on_fatal_log = false;
 
     int run_foo = 0;
     LOG(DEBUG) << foo(&run_foo) << noflush;
@@ -378,7 +379,7 @@ static void need_ostream(std::ostream& os, const char* s) {
 }
 
 TEST_F(LoggingTest, as_ostream) {
-    ::logging::FLAGS_crash_on_fatal_log = false;
+    ::butil::logging::FLAGS_crash_on_fatal_log = false;
 
     need_ostream(LOG_STREAM(WARNING) << noflush, "hello");
     ASSERT_EQ("hello", LOG_STREAM(WARNING).content_str());
@@ -422,4 +423,5 @@ TEST_F(LoggingTest, limited_logging) {
 }  // namespace
 
 }  // namespace logging
+}  // namespace butil
 #endif

@@ -198,6 +198,7 @@
 // There is the special severity of DFATAL, which logs FATAL in debug mode,
 // ERROR in normal mode.
 
+namespace butil{
 namespace logging {
 
 // TODO(avi): do we want to do a unification of character types here?
@@ -358,8 +359,8 @@ const LogSeverity BLOG_DFATAL = BLOG_ERROR;
 // by LOG() and LOG_IF, etc. Since these are used all over our code, it's
 // better to have compact code for these operations.
 #define BAIDU_COMPACT_LOG_EX(severity, ClassName, ...)  \
-    ::logging::ClassName(__FILE__, __LINE__,            \
-    ::logging::BLOG_##severity, ##__VA_ARGS__)
+    ::butil::logging::ClassName(__FILE__, __LINE__,            \
+    ::butil::logging::BLOG_##severity, ##__VA_ARGS__)
 
 #define BAIDU_COMPACK_LOG(severity)             \
     BAIDU_COMPACT_LOG_EX(severity, LogMessage)
@@ -380,7 +381,7 @@ const LogSeverity BLOG_0 = BLOG_ERROR;
 // LOG_IS_ON(DFATAL) always holds in debug mode. In particular, CHECK()s will
 // always fire if they fail.
 #define LOG_IS_ON(severity)                                     \
-    (logging::BLOG_##severity >= ::logging::GetMinLogLevel())
+    (butil::logging::BLOG_##severity >= ::butil::logging::GetMinLogLevel())
 
 #if defined(__GNUC__)
 // We emit an anonymous static int* variable at every VLOG_IS_ON(n) site.
@@ -390,18 +391,18 @@ const LogSeverity BLOG_0 = BLOG_ERROR;
 // matching the current source file that represents results of
 // parsing of --vmodule flag and/or SetVLOGLevel calls.
 # define BAIDU_VLOG_IS_ON(verbose_level, filepath)                      \
-    ({ static const int* vlocal = &::logging::VLOG_UNINITIALIZED;       \
+    ({ static const int* vlocal = &::butil::logging::VLOG_UNINITIALIZED;       \
         const int saved_verbose_level = (verbose_level);                \
         (saved_verbose_level >= 0)/*VLOG(-1) is forbidden*/ &&          \
             (*vlocal >= saved_verbose_level) &&                         \
-            ((vlocal != &::logging::VLOG_UNINITIALIZED) ||              \
-             (::logging::add_vlog_site(&vlocal, filepath, __LINE__,     \
+            ((vlocal != &::butil::logging::VLOG_UNINITIALIZED) ||              \
+             (::butil::logging::add_vlog_site(&vlocal, filepath, __LINE__,     \
                                        saved_verbose_level))); })
 #else
 // GNU extensions not available, so we do not support --vmodule.
 // Dynamic value of FLAGS_verbose always controls the logging level.
 # define BAIDU_VLOG_IS_ON(verbose_level, filepath)      \
-    (::logging::FLAGS_v >= (verbose_level))
+    (::butil::logging::FLAGS_v >= (verbose_level))
 #endif
 
 #define VLOG_IS_ON(verbose_level) BAIDU_VLOG_IS_ON(verbose_level, __FILE__)
@@ -432,7 +433,7 @@ void print_vlog_sites(VLogSitePrinter*);
 // Helper macro which avoids evaluating the arguments to a stream if
 // the condition doesn't hold.
 #define BAIDU_LAZY_STREAM(stream, condition)                            \
-    !(condition) ? (void) 0 : ::logging::LogMessageVoidify() & (stream)
+    !(condition) ? (void) 0 : ::butil::logging::LogMessageVoidify() & (stream)
 
 // We use the preprocessor's merging operator, "##", so that, e.g.,
 // LOG(INFO) becomes the token BAIDU_COMPACK_LOG(INFO).  There's some funny
@@ -470,14 +471,14 @@ void print_vlog_sites(VLogSitePrinter*);
 // file/line can be specified at running-time. This is useful for printing
 // logs with known file/line inside a LogSink or LogMessageHandler
 #define LOG_AT_STREAM(severity, file, line)                             \
-    ::logging::LogMessage(file, line, ::logging::BLOG_##severity).stream()
+    ::butil::logging::LogMessage(file, line, ::butil::logging::BLOG_##severity).stream()
 
 #define LOG_AT(severity, file, line)                                    \
     BAIDU_LAZY_STREAM(LOG_AT_STREAM(severity, file, line), LOG_IS_ON(severity))
 
 // The VLOG macros log with negative verbosities.
 #define VLOG_STREAM(verbose_level)                                      \
-    ::logging::LogMessage(__FILE__, __LINE__, -(verbose_level)).stream()
+    ::butil::logging::LogMessage(__FILE__, __LINE__, -(verbose_level)).stream()
 
 #define VLOG(verbose_level)                                             \
     BAIDU_LAZY_STREAM(VLOG_STREAM(verbose_level), VLOG_IS_ON(verbose_level))
@@ -505,12 +506,12 @@ void print_vlog_sites(VLogSitePrinter*);
 
 #if defined (OS_WIN)
 #define VPLOG_STREAM(verbose_level)                                     \
-     ::logging::Win32ErrorLogMessage(__FILE__, __LINE__, -verbose_level, \
-                                     ::logging::GetLastSystemErrorCode()).stream()
+     ::butil::logging::Win32ErrorLogMessage(__FILE__, __LINE__, -verbose_level, \
+                                     ::butil::logging::GetLastSystemErrorCode()).stream()
 #elif defined(OS_POSIX)
 #define VPLOG_STREAM(verbose_level)                                     \
-    ::logging::ErrnoLogMessage(__FILE__, __LINE__, -verbose_level,      \
-                               ::logging::GetLastSystemErrorCode()).stream()
+    ::butil::logging::ErrnoLogMessage(__FILE__, __LINE__, -verbose_level,      \
+                               ::butil::logging::GetLastSystemErrorCode()).stream()
 #endif
 
 #define VPLOG(verbose_level)                                            \
@@ -523,11 +524,11 @@ void print_vlog_sites(VLogSitePrinter*);
 #if defined(OS_WIN)
 #define PLOG_STREAM(severity)                                           \
     BAIDU_COMPACT_LOG_EX(severity, Win32ErrorLogMessage,                \
-                         ::logging::GetLastSystemErrorCode()).stream()
+                         ::butil::logging::GetLastSystemErrorCode()).stream()
 #elif defined(OS_POSIX)
 #define PLOG_STREAM(severity)                                           \
     BAIDU_COMPACT_LOG_EX(severity, ErrnoLogMessage,                     \
-                         ::logging::GetLastSystemErrorCode()).stream()
+                         ::butil::logging::GetLastSystemErrorCode()).stream()
 #endif
 
 #define PLOG(severity)                                                  \
@@ -537,7 +538,7 @@ void print_vlog_sites(VLogSitePrinter*);
 
 // The actual stream used isn't important.
 #define BAIDU_EAT_STREAM_PARAMS                                           \
-    true ? (void) 0 : ::logging::LogMessageVoidify() & LOG_STREAM(FATAL)
+    true ? (void) 0 : ::butil::logging::LogMessageVoidify() & LOG_STREAM(FATAL)
 
 // CHECK dies with a fatal error if condition is not true.  It is *not*
 // controlled by NDEBUG, so the check will be executed regardless of
@@ -578,9 +579,9 @@ void print_vlog_sites(VLogSitePrinter*);
 // CHECK_EQ(...) else { ... } work properly.
 #define BAIDU_CHECK_OP(name, op, val1, val2)                                  \
     if (std::string* _result =                                          \
-        ::logging::Check##name##Impl((val1), (val2),                    \
+        ::butil::logging::Check##name##Impl((val1), (val2),                    \
                                      #val1 " " #op " " #val2))          \
-        ::logging::LogMessage(__FILE__, __LINE__, _result).stream().SetCheck()
+        ::butil::logging::LogMessage(__FILE__, __LINE__, _result).stream().SetCheck()
 
 #endif
 
@@ -805,10 +806,10 @@ const LogSeverity BLOG_DCHECK = BLOG_INFO;
 #define BAIDU_DCHECK_OP(name, op, val1, val2)                           \
     if (DCHECK_IS_ON())                                                   \
         if (std::string* _result =                                      \
-            ::logging::Check##name##Impl((val1), (val2),                \
+            ::butil::logging::Check##name##Impl((val1), (val2),                \
                                          #val1 " " #op " " #val2))      \
-            ::logging::LogMessage(                                      \
-                __FILE__, __LINE__, ::logging::BLOG_DCHECK,             \
+            ::butil::logging::LogMessage(                                      \
+                __FILE__, __LINE__, ::butil::logging::BLOG_DCHECK,             \
                 _result).stream()
 
 // Equality/Inequality checks - compare two values, and log a
@@ -1050,12 +1051,12 @@ BUTIL_EXPORT void CloseLogFile();
 BUTIL_EXPORT void RawLog(int level, const char* message);
 
 #define RAW_LOG(level, message)                         \
-    ::logging::RawLog(::logging::BLOG_##level, message)
+    ::butil::logging::RawLog(::butil::logging::BLOG_##level, message)
 
 #define RAW_CHECK(condition, message)                                   \
     do {                                                                \
         if (!(condition))                                               \
-            ::logging::RawLog(::logging::BLOG_FATAL, "Check failed: " #condition "\n"); \
+            ::butil::logging::RawLog(::butil::logging::BLOG_FATAL, "Check failed: " #condition "\n"); \
     } while (0)
 
 #if defined(OS_WIN)
@@ -1069,10 +1070,11 @@ inline LogStream& noflush(LogStream& ls) {
 }
 
 }  // namespace logging
+}  // namespace butil
 
-using ::logging::noflush;
-using ::logging::VLogSitePrinter;
-using ::logging::print_vlog_sites;
+using ::butil::logging::noflush;
+using ::butil::logging::VLogSitePrinter;
+using ::butil::logging::print_vlog_sites;
 
 // These functions are provided as a convenience for logging, which is where we
 // use streams (it is against Google style to use streams in other places). It

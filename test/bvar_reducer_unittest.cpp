@@ -193,10 +193,10 @@ void ReducerTest_window() {
     bvar::Window<bvar::Miner<int> > w9(&c3, 3);
 
 #if !BRPC_WITH_GLOG
-    logging::StringSink log_str;
-    logging::LogSink* old_sink = logging::SetLogSink(&log_str);
+    butil::logging::StringSink log_str;
+    butil::logging::LogSink* old_sink = butil::logging::SetLogSink(&log_str);
     c2.get_value();
-    ASSERT_EQ(&log_str, logging::SetLogSink(old_sink));
+    ASSERT_EQ(&log_str, butil::logging::SetLogSink(old_sink));
     ASSERT_NE(std::string::npos, log_str.find(
                   "You should not call Reducer<int, bvar::detail::MaxTo<int>>"
                   "::get_value() when a Window<> is used because the operator"
@@ -237,10 +237,10 @@ void ReducerTest_window() {
 TEST_F(ReducerTest, window) {
 #if !BRPC_WITH_GLOG
     ReducerTest_window();
-    logging::StringSink log_str;
-    logging::LogSink* old_sink = logging::SetLogSink(&log_str);
+    butil::logging::StringSink log_str;
+    butil::logging::LogSink* old_sink = butil::logging::SetLogSink(&log_str);
     sleep(1);
-    ASSERT_EQ(&log_str, logging::SetLogSink(old_sink));
+    ASSERT_EQ(&log_str, butil::logging::SetLogSink(old_sink));
     if (log_str.find("Removed ") != std::string::npos) {
         ASSERT_NE(std::string::npos, log_str.find("Removed 3, sampled 0")) << log_str;
     }
