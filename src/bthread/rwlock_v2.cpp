@@ -154,6 +154,9 @@ rwlock_rdwait(bthread_rwlock_t *rwlock, const struct timespec *abstime)
 
     bthread_mutex_lock(&rwlock->rw_mutex);
     while (error == 0) {
+        // Get version
+        Atomic32 v = Acquire_Load((Atomic32 *)rwlock->rw_cv_reader);
+
         state = rwlock->rw_state;
         if ((state & wrflags) == 0)
             break;
@@ -165,9 +168,6 @@ rwlock_rdwait(bthread_rwlock_t *rwlock, const struct timespec *abstime)
         }
         rwlock->rw_blocked_readers++;
 
-        // Read butex value before unlocking
-        Atomic32 v = NoBarrier_Load((Atomic32 *)rwlock->rw_cv_reader);
-
         // Unlock mutex
         bthread_mutex_unlock(&rwlock->rw_mutex);
         
@@ -178,7 +178,7 @@ rwlock_rdwait(bthread_rwlock_t *rwlock, const struct timespec *abstime)
                 error = 0;
         }
 
-        //Relock mutex
+        // Relock mutex
         bthread_mutex_lock(&rwlock->rw_mutex);
 
         if (--rwlock->rw_blocked_readers == 0) {
@@ -221,6 +221,9 @@ rwlock_wrwait(bthread_rwlock_t *rwlock, const struct timespec *abstime)
 
     bthread_mutex_lock(&rwlock->rw_mutex);
     while (error == 0) {
+        // Get version
+        Atomic32 v = Acquire_Load((Atomic32 *)rwlock->rw_cv_writer);
+
         state = rwlock->rw_state;
         if (!(state & RWLOCK_WRITE_OWNER) && RWLOCK_READER_COUNT(state) == 0)
             break;
@@ -230,9 +233,6 @@ rwlock_wrwait(bthread_rwlock_t *rwlock, const struct timespec *abstime)
                 continue;
         }
         rwlock->rw_blocked_writers++;
-
-        // Read butex value before unlocking
-        Atomic32 v = NoBarrier_Load((Atomic32 *)rwlock->rw_cv_writer);
 
         // Unlock mutex
         bthread_mutex_unlock(&rwlock->rw_mutex);
@@ -362,8 +362,6 @@ bthread_rwlock_unlock(bthread_rwlock_t *rwlock)
     }
 
     if (q != NULL) {
-        bthread_mutex_lock(&rwlock->rw_mutex);
-        bthread_mutex_unlock(&rwlock->rw_mutex);
         Barrier_AtomicIncrement((Atomic32 *)q, 1);
         if (broadcast)
             butex_wake_all(q);
