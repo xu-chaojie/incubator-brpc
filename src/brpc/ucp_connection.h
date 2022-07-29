@@ -21,6 +21,7 @@
 #include "butil/intrusive_ptr.hpp"
 #include "butil/atomicops.h"
 #include "butil/iobuf.h"
+#include "bthread/rwlock_v2.h"
 #include "bthread/mutex.h"
 #include "bthread/condition_variable.h"
 #include "brpc/RefCountedObj.h"
@@ -64,7 +65,7 @@ private:
         STATE_CLOSED,
     };
 
-    mutable bthread::Mutex mutex_;
+    mutable bthread::v2::bthread_rwlock lock_;
     bthread::ConditionVariable cond_;
     UcpCm *cm_;
     UcpWorker *worker_;

@@ -44,6 +44,7 @@ UcpConnection::UcpConnection(UcpCm *cm, UcpWorker *w)
     , send_nvec_(0)
     , send_nbytes_(0)
 {
+    bthread_rwlock_init(&lock_, NULL); 
     remote_side_.set_ucp();
 }
 
@@ -52,11 +53,12 @@ UcpConnection::~UcpConnection()
     if (ep_) {
         LOG(ERROR) << "ep_ should be NULL";
     }
+    bthread_rwlock_destroy(&lock_);
 }
 
 int UcpConnection::Accept(ucp_conn_request_h req)
 {
-    BAIDU_SCOPED_LOCK(mutex_);
+    bthread::v2::wlock_guard wg(lock_);
     int rc = worker_->Accept(this, req);
     if (rc == 0) {
         state_ = STATE_OPEN;
@@ -66,7 +68,7 @@ int UcpConnection::Accept(ucp_conn_request_h req)
 
 int UcpConnection::Connect(const butil::EndPoint &peer)
 {
-    BAIDU_SCOPED_LOCK(mutex_);
+    bthread::v2::wlock_guard wg(lock_);
     int rc = worker_->Connect(this, peer);
     if (rc == 0) {
         state_ = STATE_OPEN;
@@ -76,7 +78,7 @@ int UcpConnection::Connect(const butil::EndPoint &peer)
 
 void UcpConnection::Close()
 {
-    BAIDU_SCOPED_LOCK(mutex_);
+    bthread::v2::wlock_guard wg(lock_);
     if (state_ != STATE_OPEN) {
         return;
     }
@@ -91,7 +93,7 @@ SocketId UcpConnection::GetSocketId() const
 
 void UcpConnection::SetSocketId(SocketId id)
 {
-    BAIDU_SCOPED_LOCK(mutex_);
+    bthread::v2::wlock_guard wg(lock_);
     socket_id_ = id;
     socket_id_set_ = true;
     if (ucp_code_.load()) {
@@ -121,7 +123,7 @@ void UcpConnection::DataReady()
 ssize_t UcpConnection::Read(butil::IOBuf *out, size_t size_hint)
 {
     ssize_t rc, left;
-    BAIDU_SCOPED_LOCK(mutex_);
+    bthread::v2::rlock_guard rg(lock_);
  
     // Connection closed, return EOF
     if (state_ != STATE_OPEN) {
@@ -167,7 +169,7 @@ ssize_t UcpConnection::Write(butil::IOBuf *buf)
 
 ssize_t UcpConnection::Write(butil::IOBuf *data_list[], int ndata)
 {
-    std::unique_lock<bthread::Mutex> mu(mutex_);
+    bthread::v2::rlock_guard rg(lock_);
     if (state_ != STATE_OPEN) {
         errno = ENOTCONN;
         return -1;
