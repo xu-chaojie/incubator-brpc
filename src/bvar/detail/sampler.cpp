@@ -15,6 +15,7 @@
 // Author: Ge,Jun (gejun@baidu.com)
 // Date: Tue Jul 28 18:14:40 CST 2015
 
+#include <gflags/gflags.h>
 #include "butil/time.h"
 #include "butil/memory/singleton_on_pthread_once.h"
 #include "bvar/reducer.h"
@@ -124,7 +125,11 @@ private:
 PassiveStatus<double>* g_cumulated_time_bvar = NULL;
 bvar::PerSecond<bvar::PassiveStatus<double> >* g_sampling_thread_usage_bvar = NULL;
 
+DEFINE_int32(bvar_sampler_thread_start_delay_us, 10000, "bvar sampler thread start delay us");
+
 void SamplerCollector::run() {
+    ::usleep(FLAGS_bvar_sampler_thread_start_delay_us);
+    
 #ifndef UNIT_TEST
     // NOTE:
     // * Following vars can't be created on thread's stack since this thread
