@@ -21,12 +21,32 @@
 
 #include <gflags/gflags.h>
 #include <sys/socket.h>
+#include <ucs/datastruct/list.h>
 
 namespace brpc {
 
 DEFINE_int32(ucp_receive_lowat_bytes, 16384, "receive buffer low water bytes");
 
 bthread_attr_t ucp_consumer_thread_attr = BTHREAD_ATTR_NORMAL;
+
+UcpAmMsg::UcpAmMsg()
+{
+    sn = -1;
+    data = nullptr;
+    length = 0;
+    nvec = 0;
+    code = UCS_OK;
+    req = nullptr;
+    flags = 0;
+}
+
+UcpAmSendInfo::UcpAmSendInfo()
+{
+    header.sn = -1;
+    code = UCS_OK;
+    req = nullptr;
+    nvec = 0;
+}
 
 UcpConnection::UcpConnection(UcpCm *cm, UcpWorker *w)
     : cm_(cm)
@@ -37,15 +57,11 @@ UcpConnection::UcpConnection(UcpCm *cm, UcpWorker *w)
     , socket_id_set_(false)
     , state_(STATE_NONE)
     , data_ready_flag_(false)
-    , recv_req_(NULL)
-    , recv_nvec_(0)
-    , recv_nbytes_(0)
-    , send_req_(NULL)
-    , send_nvec_(0)
-    , send_nbytes_(0)
 {
-    bthread_rwlock_init(&lock_, NULL); 
     remote_side_.set_ucp();
+    TAILQ_INIT(&recv_q_);
+    TAILQ_INIT(&send_q_);
+    next_send_sn_ = 0;
 }
 
 UcpConnection::~UcpConnection()
@@ -53,12 +69,11 @@ UcpConnection::~UcpConnection()
     if (ep_) {
         LOG(ERROR) << "ep_ should be NULL";
     }
-    bthread_rwlock_destroy(&lock_);
 }
 
 int UcpConnection::Accept(ucp_conn_request_h req)
 {
-    bthread::v2::wlock_guard wg(lock_);
+    BAIDU_SCOPED_LOCK(mutex_);
     int rc = worker_->Accept(this, req);
     if (rc == 0) {
         state_ = STATE_OPEN;
@@ -68,7 +83,7 @@ int UcpConnection::Accept(ucp_conn_request_h req)
 
 int UcpConnection::Connect(const butil::EndPoint &peer)
 {
-    bthread::v2::wlock_guard wg(lock_);
+    BAIDU_SCOPED_LOCK(mutex_);
     int rc = worker_->Connect(this, peer);
     if (rc == 0) {
         state_ = STATE_OPEN;
@@ -78,7 +93,7 @@ int UcpConnection::Connect(const butil::EndPoint &peer)
 
 void UcpConnection::Close()
 {
-    bthread::v2::wlock_guard wg(lock_);
+    BAIDU_SCOPED_LOCK(mutex_);
     if (state_ != STATE_OPEN) {
         return;
     }
@@ -93,7 +108,7 @@ SocketId UcpConnection::GetSocketId() const
 
 void UcpConnection::SetSocketId(SocketId id)
 {
-    bthread::v2::wlock_guard wg(lock_);
+    BAIDU_SCOPED_LOCK(mutex_);
     socket_id_ = id;
     socket_id_set_ = true;
     if (ucp_code_.load()) {
@@ -122,8 +137,8 @@ void UcpConnection::DataReady()
 
 ssize_t UcpConnection::Read(butil::IOBuf *out, size_t size_hint)
 {
-    ssize_t rc, left;
-    bthread::v2::rlock_guard rg(lock_);
+    ssize_t rc;
+    BAIDU_SCOPED_LOCK(mutex_);
  
     // Connection closed, return EOF
     if (state_ != STATE_OPEN) {
@@ -131,24 +146,15 @@ ssize_t UcpConnection::Read(butil::IOBuf *out, size_t size_hint)
         return 0;
     }
 
-again:
     {
         // Try to read from input buffer
         BAIDU_SCOPED_LOCK(io_mutex_);
         rc = in_buf_.cutn(out, size_hint); 
-        left = in_buf_.length();
     }
 
     if (rc == 0) {
         if (ucp_code_.load()) // IO error happened, return EOF
             return 0;
-    }
-
-    /* Trigger reading if left data is too little */
-    if (left < FLAGS_ucp_receive_lowat_bytes && !ucp_code_.load()) {
-        ssize_t tmp = worker_->StartRecv(this);
-        if (tmp > 0 && rc == 0)
-            goto again;
     }
 
     if (rc == 0) {
@@ -169,7 +175,7 @@ ssize_t UcpConnection::Write(butil::IOBuf *buf)
 
 ssize_t UcpConnection::Write(butil::IOBuf *data_list[], int ndata)
 {
-    bthread::v2::rlock_guard rg(lock_);
+    std::unique_lock<bthread::Mutex> mu(mutex_);
     if (state_ != STATE_OPEN) {
         errno = ENOTCONN;
         return -1;

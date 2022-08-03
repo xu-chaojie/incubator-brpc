@@ -73,7 +73,7 @@ int UCP_Context::init()
     /* UCP initialization */
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES |
                             UCP_PARAM_FIELD_MT_WORKERS_SHARED;
-    ucp_params.features = UCP_FEATURE_STREAM |
+    ucp_params.features = UCP_FEATURE_AM |
                           UCP_FEATURE_WAKEUP;
     ucp_params.mt_workers_shared = 1;
 

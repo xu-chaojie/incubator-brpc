@@ -21,13 +21,15 @@
 #include "butil/intrusive_ptr.hpp"
 #include "butil/atomicops.h"
 #include "butil/iobuf.h"
-#include "bthread/rwlock_v2.h"
 #include "bthread/mutex.h"
 #include "bthread/condition_variable.h"
 #include "brpc/RefCountedObj.h"
 #include "brpc/socket_id.h"
 #include "brpc/eventcallback.h"
 #include <ucp/api/ucp.h>
+#include <sys/queue.h>
+#include <assert.h>
+#include <vector>
 
 namespace brpc {
 
@@ -37,8 +39,61 @@ class UcpConnection;
 
 typedef butil::intrusive_ptr<UcpConnection> UcpConnectionRef;
 
-const int MAX_UCP_IOV = 16;
-const int MAX_UCP_IO_BYTES = 65536;
+struct MsgHeader {
+    uint64_t sn;
+};
+
+struct UcpAmMsg;
+struct UcpAmSendInfo;
+
+typedef TAILQ_HEAD(UcpAmList, UcpAmMsg) UcpAmList;
+typedef TAILQ_HEAD(UcpAmSendList, UcpAmSendInfo) UcpAmSendList;
+
+// UcpAmMsg flags
+enum {
+    AMF_MSG_Q,
+    AMF_RECV_Q,
+    AMF_COMP_Q,
+    AMF_RNDV,
+    AMF_FINISH,
+};
+
+struct UcpAmMsg {
+    TAILQ_ENTRY(UcpAmMsg) link;
+    TAILQ_ENTRY(UcpAmMsg) comp_link;
+    UcpConnectionRef conn;
+    uint64_t sn;
+    union {
+        void *desc;
+        void *data;
+    };
+    uint64_t length;
+    butil::IOPortal buf;
+    butil::iobuf_ucp_iov_t iov;
+    int nvec;
+    int flags;
+    ucs_status_t code;
+    void *req;
+
+    void set_flag(int f) { flags |= UCS_BIT(f); }
+    void clear_flag(int f) { flags &= ~UCS_BIT(f); }
+    bool has_flag(int f) const { return !!(flags & UCS_BIT(f)); }
+
+    UcpAmMsg();
+};
+
+struct UcpAmSendInfo {
+    TAILQ_ENTRY(UcpAmSendInfo) link;
+    UcpConnectionRef conn;
+    butil::IOPortal buf;
+    butil::iobuf_ucp_iov_t iov;
+    MsgHeader header;
+    ucs_status_t code;
+    void *req;
+    int nvec;
+
+    UcpAmSendInfo();
+};
 
 class UcpConnection : public RefCountedObject {
 public:
@@ -65,7 +120,7 @@ private:
         STATE_CLOSED,
     };
 
-    mutable bthread::v2::bthread_rwlock lock_;
+    mutable bthread::Mutex mutex_;
     bthread::ConditionVariable cond_;
     UcpCm *cm_;
     UcpWorker *worker_;
@@ -81,16 +136,9 @@ private:
     bool data_ready_flag_;
     mutable bthread::Mutex io_mutex_;
     butil::IOPortal in_buf_;
-    ucs_status_ptr_t recv_req_;
-    int recv_nvec_;
-    ssize_t recv_nbytes_;
-    ucp_dt_iov_t recv_iov_[MAX_UCP_IOV];
-
-    butil::IOBuf out_buf_;
-    ucs_status_ptr_t send_req_;
-    int send_nvec_;
-    ssize_t send_nbytes_;
-    ucp_dt_iov_t send_iov_[MAX_UCP_IOV];
+    UcpAmList recv_q_;
+    UcpAmSendList send_q_;
+    uint64_t next_send_sn_;
     friend class UcpCm;
     friend class UcpWorker;
 };

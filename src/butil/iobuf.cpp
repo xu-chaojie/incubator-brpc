@@ -934,7 +934,7 @@ int IOBuf::_cut_by_delim(IOBuf* out, char const* dbegin, size_t ndelim) {
     return -1;
 }
 
-ssize_t IOBuf::fill_ucp_dt_iov(ucp_dt_iov_t *vec, int max_vec,
+ssize_t IOBuf::fill_ucp_iov(iobuf_ucp_iov_t *_vec, int max_vec,
     int *real_nvec, size_t size_hint) {
     if (empty()) {
         if (real_nvec)
@@ -942,12 +942,15 @@ ssize_t IOBuf::fill_ucp_dt_iov(ucp_dt_iov_t *vec, int max_vec,
         return 0;
     }
 
+    iobuf_ucp_iov_t &vec = *_vec;
     const int nref = std::min((int)_ref_num(), max_vec);
     int nvec = 0;
     size_t cur_len = 0;
 
     do {
         IOBuf::BlockRef const& r = _ref_at(nvec);
+        if (vec.size() < (size_t)nvec+1)
+            vec.resize(nvec+1);
         vec[nvec].buffer = r.block->data + r.offset;
         vec[nvec].length = r.length;
         ++nvec;
@@ -1658,15 +1661,17 @@ ssize_t IOPortal::pappend_from_file_descriptor(
     return nr;
 }
 
-ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, ucp_dt_iov_t *vec, int *_nvec)
+ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, iobuf_ucp_iov_t *_vec, int *_nvec)
 {
+    auto &vec = *_vec;
     int &nvec = *_nvec;
     size_t space = 0;
     Block* prev_p = NULL;
     Block* p = _block;
     nvec = 0;
-    // Prepare at most max_iov blocks or space of blocks >= max_count
     do {
+        if (vec.size() < (size_t)nvec + 1)
+            vec.resize(nvec+1);
         if (p == NULL) {
             p = iobuf::acquire_tls_block();
             if (BAIDU_UNLIKELY(!p)) {
