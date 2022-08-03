@@ -87,6 +87,8 @@ private:
     static void AmSendCb(void *request, ucs_status_t status,
                          void *user_data);
     static void ErrorCallback(void *arg, ucp_ep_h, ucs_status_t);
+    static void ReleaseWorkerData(void *data, void *arg);
+    void RecycleFreeData();
 private:
     bthread::Mutex mutex_;
     bthread::Mutex external_mutex_;
@@ -119,6 +121,9 @@ private:
     std::queue<UcpConnectionRef> data_ready_;
     UcpAmList msg_q_;
     UcpAmList recv_comp_q_;
+
+    std::atomic<void *>free_data_;
+    int free_data_count_;
     friend class UcpConnection;
 };
 

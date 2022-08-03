@@ -34,6 +34,8 @@ UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
     , worker_tid_(INVALID_BTHREAD)
     , event_fd_(-1)
     , ucp_worker_(NULL)
+    , free_data_(NULL)
+    , free_data_count_(0)
 {
     TAILQ_INIT(&msg_q_);
     TAILQ_INIT(&recv_comp_q_);
@@ -222,6 +224,7 @@ again:
             DispatchRecvCompQ();
             DispatchDataReady();
             CheckExitingEp();
+            RecycleFreeData();
         }
         ucs_status_t stat = ucp_worker_arm(ucp_worker_);
         if (stat == UCS_ERR_BUSY) /* some events are arrived already */
@@ -293,6 +296,21 @@ ucs_status_t UcpWorker::DoAmCallback(
     return UCS_INPROGRESS;
 }
 
+void UcpWorker::ReleaseWorkerData(void *data, void *arg)
+{
+    UcpWorker *w = (UcpWorker *)arg;
+    void **ptr = (void **)data;
+
+    do {
+        *ptr = w->free_data_.load(std::memory_order_relaxed);
+    } while (!w->free_data_.compare_exchange_strong(*ptr, data,
+             std::memory_order_relaxed));
+    if (++w->free_data_count_ > 100) {
+        w->free_data_count_ = 0;
+        w->MaybeWakeup();
+    }
+}
+
 void UcpWorker::DispatchAmMsgQ()
 {
     UcpAmMsg *msg, *msg2;
@@ -318,10 +336,14 @@ void UcpWorker::DispatchAmMsgQ()
         msg->clear_flag(AMF_MSG_Q);
         UcpConnectionRef conn = msg->conn;
         if (!msg->has_flag(AMF_RNDV)) {
-            msg->buf.append(msg->data, msg->length);
+            if (msg->length >= 8) {
+                msg->buf.append_user_data(msg->data, msg->length, ReleaseWorkerData, this);
+            } else {
+                msg->buf.append(msg->data, msg->length);
+                ucp_am_data_release(ucp_worker_, msg->data);
+            }
             msg->req = nullptr;
             mutex_.lock();
-            ucp_am_data_release(ucp_worker_, msg->data);
             goto request_done;
         }
  
@@ -704,6 +726,19 @@ ssize_t UcpWorker::StartSend(UcpConnection *conn,
         }
     }
     return total;
+}
+
+void UcpWorker::RecycleFreeData()
+{
+    if (!free_data_.load(std::memory_order_relaxed))
+        return;
+    free_data_count_ = 0;
+    void *p = free_data_.exchange(NULL, std::memory_order_release);
+    while (p) {
+        void *next = *(void **)p;
+        ucp_am_data_release(ucp_worker_, p);
+        p = next;
+    }
 }
 
 } // namespace brpc

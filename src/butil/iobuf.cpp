@@ -186,9 +186,14 @@ size_t IOBuf::new_bigview_count() {
 
 const uint16_t IOBUF_BLOCK_FLAGS_USER_DATA = 0x1;
 typedef void (*UserDataDeleter)(void*);
+typedef void (*UserDataDeleter2)(void*, void*);
 
 struct UserDataExtension {
-    UserDataDeleter deleter;
+    union {
+        UserDataDeleter deleter;
+        UserDataDeleter2 deleter2;
+    };
+    void *arg;
 };
 
 struct IOBuf::Block {
@@ -225,6 +230,19 @@ struct IOBuf::Block {
         , portal_next(NULL)
         , data(data_in) {
         get_user_data_extension()->deleter = deleter;
+        get_user_data_extension()->arg = NULL;
+    }
+
+    Block(char* data_in, uint32_t data_size, UserDataDeleter2 deleter, void *arg)
+        : nshared(1)
+        , flags(IOBUF_BLOCK_FLAGS_USER_DATA)
+        , abi_check(0)
+        , size(data_size)
+        , cap(data_size)
+        , portal_next(NULL)
+        , data(data_in) {
+        get_user_data_extension()->deleter2 = deleter;
+        get_user_data_extension()->arg = arg;
     }
 
     // Undefined behavior when (flags & IOBUF_BLOCK_FLAGS_USER_DATA) is 0.
@@ -258,7 +276,8 @@ struct IOBuf::Block {
                 this->~Block();
                 iobuf::blockmem_deallocate(this);
             } else if (flags & IOBUF_BLOCK_FLAGS_USER_DATA) {
-                get_user_data_extension()->deleter(data);
+                UserDataExtension* e = get_user_data_extension();
+                e->deleter2(data, e->arg);
                 this->~Block();
                 free(this);
             }
@@ -1258,7 +1277,11 @@ int IOBuf::appendv(const const_iovec* vec, size_t n) {
     return 0;
 }
 
-int IOBuf::append_user_data(void* data, size_t size, void (*deleter)(void*)) {
+int IOBuf::append_user_data(void* data, size_t size, UserDataDeleter deleter) {
+    return append_user_data(data, size, (UserDataDeleter2)deleter, NULL);
+}
+
+int IOBuf::append_user_data(void* data, size_t size, UserDataDeleter2 deleter, void *arg) {
     if (size > 0xFFFFFFFFULL - 100) {
         LOG(FATAL) << "data_size=" << size << " is too large";
         return -1;
@@ -1268,9 +1291,9 @@ int IOBuf::append_user_data(void* data, size_t size, void (*deleter)(void*)) {
         return -1;
     }
     if (deleter == NULL) {
-        deleter = ::free;
+        deleter = (UserDataDeleter2) &::free;
     }
-    IOBuf::Block* b = new (mem) IOBuf::Block((char*)data, size, deleter);
+    IOBuf::Block* b = new (mem) IOBuf::Block((char*)data, size, deleter, arg);
     const IOBuf::BlockRef r = { 0, b->cap, b };
     _move_back_ref(r);
     return 0;
