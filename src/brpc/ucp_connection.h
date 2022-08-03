@@ -21,6 +21,7 @@
 #include "butil/intrusive_ptr.hpp"
 #include "butil/atomicops.h"
 #include "butil/iobuf.h"
+#include "butil/resource_pool.h"
 #include "bthread/mutex.h"
 #include "bthread/condition_variable.h"
 #include "brpc/RefCountedObj.h"
@@ -74,12 +75,20 @@ struct UcpAmMsg {
     int flags;
     ucs_status_t code;
     void *req;
+    butil::ResourceId<UcpAmMsg> id;
 
     void set_flag(int f) { flags |= UCS_BIT(f); }
     void clear_flag(int f) { flags &= ~UCS_BIT(f); }
     bool has_flag(int f) const { return !!(flags & UCS_BIT(f)); }
 
+    static UcpAmMsg *Allocate(void);
+    static void Release(UcpAmMsg *o);
+
+private:
     UcpAmMsg();
+    void operator delete( void * ) {}
+
+    friend class butil::ResourcePool<UcpAmMsg>;
 };
 
 struct UcpAmSendInfo {
@@ -91,8 +100,15 @@ struct UcpAmSendInfo {
     ucs_status_t code;
     void *req;
     int nvec;
+    butil::ResourceId<UcpAmSendInfo> id;
 
+    static UcpAmSendInfo *Allocate(void);
+    static void Release(UcpAmSendInfo *o);
+
+private:
     UcpAmSendInfo();
+    void operator delete( void * ) {}
+    friend class butil::ResourcePool<UcpAmSendInfo>;
 };
 
 class UcpConnection : public RefCountedObject {

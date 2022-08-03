@@ -40,12 +40,51 @@ UcpAmMsg::UcpAmMsg()
     flags = 0;
 }
 
+UcpAmMsg *UcpAmMsg::Allocate(void)
+{
+    butil::ResourceId<UcpAmMsg> id;
+    auto o = butil::get_resource<UcpAmMsg>(&id);
+    o->id = id;
+    return o;
+}
+
+void UcpAmMsg::Release(UcpAmMsg *o)
+{
+    o->sn = -1;
+    o->data = nullptr;
+    o->length = 0;
+    o->nvec = 0;
+    o->code = UCS_OK;
+    o->req = nullptr;
+    o->flags = 0;
+    o->buf.clear();
+    butil::return_resource<UcpAmMsg>(o->id);
+}
+
 UcpAmSendInfo::UcpAmSendInfo()
 {
     header.sn = -1;
     code = UCS_OK;
     req = nullptr;
     nvec = 0;
+}
+
+UcpAmSendInfo *UcpAmSendInfo::Allocate(void)
+{
+    butil::ResourceId<UcpAmSendInfo> id;
+    auto o = butil::get_resource<UcpAmSendInfo>(&id);
+    o->id = id;
+    return o;
+}
+
+void UcpAmSendInfo::Release(UcpAmSendInfo *o)
+{
+    o->header.sn = -1;
+    o->code = UCS_OK;
+    o->req = nullptr;
+    o->nvec = 0;
+    o->buf.clear();
+    butil::return_resource<UcpAmSendInfo>(o->id);
 }
 
 UcpConnection::UcpConnection(UcpCm *cm, UcpWorker *w)

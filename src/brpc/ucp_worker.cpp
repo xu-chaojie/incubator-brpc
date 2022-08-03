@@ -278,7 +278,7 @@ ucs_status_t UcpWorker::DoAmCallback(
     }
 
     UcpConnectionRef& conn = it->second;
-    UcpAmMsg *msg = new UcpAmMsg;
+    UcpAmMsg *msg = UcpAmMsg::Allocate();
     if (msg == NULL) {
         LOG(ERROR) << "can not allocate UcpMsg";
         return UCS_OK;
@@ -476,7 +476,7 @@ bool UcpWorker::CheckConnRecvQ(const UcpConnectionRef& conn)
         avail = true;
         TAILQ_REMOVE(&conn->recv_q_, msg, link);
         msg->clear_flag(AMF_RECV_Q);
-        delete msg;
+        UcpAmMsg::Release(msg);
     }
     conn->io_mutex_.unlock();
     return avail;
@@ -657,7 +657,7 @@ void UcpWorker::AmSendCb(void *request, ucs_status_t status, void *user_data)
     
     TAILQ_REMOVE(&conn->send_q_, msg, link);
     ucp_request_free(msg->req);
-    delete msg;
+    UcpAmSendInfo::Release(msg);
 }
 
 ssize_t UcpWorker::StartSend(UcpConnection *conn,
@@ -676,7 +676,7 @@ ssize_t UcpWorker::StartSend(UcpConnection *conn,
         return 0;
 
     for (int i = 0; i < ndata; ++i) {
-        UcpAmSendInfo *msg = new UcpAmSendInfo;
+        UcpAmSendInfo *msg = UcpAmSendInfo::Allocate();
         if (msg == NULL) {
             LOG(ERROR) << "cannot allocater UcpAmSendInfo";
             return total;
@@ -706,7 +706,7 @@ ssize_t UcpWorker::StartSend(UcpConnection *conn,
             TAILQ_REMOVE(&conn->send_q_, msg, link);
             total += msg->buf.length();
             mutex_.unlock();
-            delete msg;
+            UcpAmSendInfo::Release(msg);
             conn->next_send_sn_++;
         } else if (UCS_PTR_IS_ERR(msg->req)) {
             TAILQ_REMOVE(&conn->send_q_, msg, link);
@@ -714,7 +714,7 @@ ssize_t UcpWorker::StartSend(UcpConnection *conn,
             conn->ucp_code_.store(st);
             SetDataReadyLocked(conn);
             mutex_.unlock();
-            delete msg;
+            UcpAmSendInfo::Release(msg);
             LOG(ERROR) << "Failed to ucp_am_send_nbx("
                        << ucs_status_string(st) << ")";
             errno = EIO;
