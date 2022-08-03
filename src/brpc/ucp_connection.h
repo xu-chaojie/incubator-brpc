@@ -23,6 +23,7 @@
 #include "butil/iobuf.h"
 #include "butil/resource_pool.h"
 #include "bthread/mutex.h"
+#include "bthread/rwlock_v2.h"
 #include "bthread/condition_variable.h"
 #include "brpc/RefCountedObj.h"
 #include "brpc/socket_id.h"
@@ -136,7 +137,7 @@ private:
         STATE_CLOSED,
     };
 
-    mutable bthread::Mutex mutex_;
+    mutable bthread::v2::bthread_rwlock_t mutex_;
     bthread::ConditionVariable cond_;
     UcpCm *cm_;
     UcpWorker *worker_;

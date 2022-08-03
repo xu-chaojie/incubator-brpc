@@ -97,6 +97,7 @@ UcpConnection::UcpConnection(UcpCm *cm, UcpWorker *w)
     , state_(STATE_NONE)
     , data_ready_flag_(false)
 {
+    bthread_rwlock_init(&mutex_, NULL);
     remote_side_.set_ucp();
     TAILQ_INIT(&recv_q_);
     TAILQ_INIT(&send_q_);
@@ -108,11 +109,13 @@ UcpConnection::~UcpConnection()
     if (ep_) {
         LOG(ERROR) << "ep_ should be NULL";
     }
+    bthread_rwlock_destroy(&mutex_);
 }
 
 int UcpConnection::Accept(ucp_conn_request_h req)
 {
-    BAIDU_SCOPED_LOCK(mutex_);
+    bthread::v2::wlock_guard g(mutex_);
+
     int rc = worker_->Accept(this, req);
     if (rc == 0) {
         state_ = STATE_OPEN;
@@ -122,7 +125,8 @@ int UcpConnection::Accept(ucp_conn_request_h req)
 
 int UcpConnection::Connect(const butil::EndPoint &peer)
 {
-    BAIDU_SCOPED_LOCK(mutex_);
+    bthread::v2::wlock_guard g(mutex_);
+
     int rc = worker_->Connect(this, peer);
     if (rc == 0) {
         state_ = STATE_OPEN;
@@ -132,7 +136,8 @@ int UcpConnection::Connect(const butil::EndPoint &peer)
 
 void UcpConnection::Close()
 {
-    BAIDU_SCOPED_LOCK(mutex_);
+    bthread::v2::wlock_guard g(mutex_);
+
     if (state_ != STATE_OPEN) {
         return;
     }
@@ -147,7 +152,8 @@ SocketId UcpConnection::GetSocketId() const
 
 void UcpConnection::SetSocketId(SocketId id)
 {
-    BAIDU_SCOPED_LOCK(mutex_);
+    bthread::v2::wlock_guard g(mutex_);
+
     socket_id_ = id;
     socket_id_set_ = true;
     if (ucp_code_.load()) {
@@ -177,7 +183,7 @@ void UcpConnection::DataReady()
 ssize_t UcpConnection::Read(butil::IOBuf *out, size_t size_hint)
 {
     ssize_t rc;
-    BAIDU_SCOPED_LOCK(mutex_);
+    bthread::v2::rlock_guard g(mutex_);
  
     // Connection closed, return EOF
     if (state_ != STATE_OPEN) {
@@ -214,7 +220,8 @@ ssize_t UcpConnection::Write(butil::IOBuf *buf)
 
 ssize_t UcpConnection::Write(butil::IOBuf *data_list[], int ndata)
 {
-    std::unique_lock<bthread::Mutex> mu(mutex_);
+    bthread::v2::rlock_guard g(mutex_);
+
     if (state_ != STATE_OPEN) {
         errno = ENOTCONN;
         return -1;
