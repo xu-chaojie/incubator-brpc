@@ -32,6 +32,7 @@
 namespace brpc {
 
 DEFINE_int32(brpc_ucp_worker_delay, 100, "Number of microseconds");
+DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
 
 UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
     : status_(UNINITIALIZED)
@@ -45,6 +46,8 @@ UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
 {
     TAILQ_INIT(&msg_q_);
     TAILQ_INIT(&recv_comp_q_);
+    // This can not be changed dynamically
+    out_of_order_ = FLAGS_brpc_ucp_deliver_out_of_order;
 }
 
 UcpWorker::~UcpWorker()
@@ -448,7 +451,7 @@ void UcpWorker::DoAmRecvCallback(UcpAmMsg *msg, ucs_status_t status,
     msg->code = status;
     CHECK(msg->length == length) << "strange, length not equal, expect "
                                  << msg->length << ", actual " << length;
-    CHECK(!msg->has_flag(AMF_COMP_Q)) << "already on comp queue";
+    CHECK(!msg->has_flag(AMF_COMP_Q)) << "already on complete queue";
     TAILQ_INSERT_TAIL(&recv_comp_q_, msg, comp_link);
     msg->set_flag(AMF_COMP_Q);
     if (status != UCS_OK) {
@@ -478,7 +481,7 @@ void UcpWorker::DispatchRecvCompQ()
         CHECK(!msg->has_flag(AMF_FINISH)) << "finish should not set";
         msg->set_flag(AMF_FINISH);
 
-        CHECK(msg->has_flag(AMF_COMP_Q)) << "not on comp queue";
+        CHECK(msg->has_flag(AMF_COMP_Q)) << "not on complete queue";
         TAILQ_REMOVE(&tmp_list, msg, comp_link);
         msg->clear_flag(AMF_COMP_Q);
 
@@ -486,7 +489,18 @@ void UcpWorker::DispatchRecvCompQ()
             if (msg->has_flag(AMF_RNDV))
                 msg->buf.append_from_buffer(msg->length);
         }
-        bool avail = CheckConnRecvQ(conn);
+
+        bool avail = false;
+        if (out_of_order_) {
+            CHECK(msg->has_flag(AMF_RECV_Q)) << "not on receive queue";
+            TAILQ_REMOVE(&conn->recv_q_, msg, link);
+            msg->clear_flag(AMF_RECV_Q);
+            SaveInputMessage(conn, msg); 
+            avail = true;
+        } else {
+            avail = CheckConnRecvQ(conn);
+        }
+
         if (avail) {
             SetDataReady(conn);
         }
@@ -511,8 +525,8 @@ bool UcpWorker::CheckConnRecvQ(const UcpConnectionRef& conn)
         if (msg->sn != conn->expect_sn_)
             break;
         avail = true;
-        CHECK(msg->has_flag(AMF_RECV_Q)) << "not on recv queue";
-        CHECK(!msg->has_flag(AMF_COMP_Q)) << "still on comp queue";
+        CHECK(msg->has_flag(AMF_RECV_Q)) << "not on receive queue";
+        CHECK(!msg->has_flag(AMF_COMP_Q)) << "still on complete queue";
         TAILQ_REMOVE(&conn->recv_q_, msg, link);
         msg->clear_flag(AMF_RECV_Q);
 
