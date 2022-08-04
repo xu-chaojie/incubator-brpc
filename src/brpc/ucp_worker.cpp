@@ -348,7 +348,7 @@ void UcpWorker::DispatchAmMsgQ()
 
     TAILQ_INIT(&tmp_list);
     TAILQ_CONCAT(&tmp_list, &msg_q_, link);
-    // msg_q is inited by TAILQ_CONCAT
+    // msg_q_ is inited by TAILQ_CONCAT
     mutex_.unlock();
 
     while (!TAILQ_EMPTY(&tmp_list)) {
@@ -440,7 +440,8 @@ void UcpWorker::DoAmRecvCallback(UcpAmMsg *msg, ucs_status_t status,
     msg->set_flag(AMF_COMP_Q);
     if (status != UCS_OK) {
         LOG(ERROR ) << "receive with error ("
-                    << ucs_status_string(status) << ")";
+                    << ucs_status_string(status) << ")"
+                    << " from " << msg->conn->remote_side_str_;
     }
 }
 
@@ -454,6 +455,7 @@ void UcpWorker::DispatchRecvCompQ()
     }
     TAILQ_INIT(&tmp_list);
     TAILQ_CONCAT(&tmp_list, &recv_comp_q_, comp_link);
+    // recv_comp_q_ is inited by TAILQ_CONCAT
     mutex_.unlock();
 
     while (!TAILQ_EMPTY(&tmp_list)) {
@@ -537,7 +539,7 @@ void UcpWorker::MergeInputMessage(UcpConnection *conn)
     }
     for (msg = prev; msg; msg = next) {
         next = msg->link.tqe_next;
-        // If receiving error already occurred, skip any left message
+        // If receiving error already occurred, skip any left messages
         if (!conn->ucp_recv_code_.load(butil::memory_order_relaxed)) {
             if (msg->code == UCS_OK) {
                 conn->in_buf_.append(butil::IOBuf::Movable(msg->buf));
@@ -617,6 +619,8 @@ void UcpWorker::Release(UcpConnectionRef conn)
 {
     ucs_status_ptr_t request;
     ucp_ep_h ep = conn->ep_;
+
+    // Lock the worker
     BAIDU_SCOPED_LOCK(mutex_);
 
     auto it = conn_map_.find(ep);
@@ -764,6 +768,8 @@ void UcpWorker::SendRequest(UcpAmSendInfo *msg)
 {
     UcpAmSendInfo *ptr;
 
+    // Just hang the request on send_list_, caller should
+    // signal worker to send 
     do {
         ptr = send_list_.load(std::memory_order_acquire);
         msg->link.tqe_next = ptr;
