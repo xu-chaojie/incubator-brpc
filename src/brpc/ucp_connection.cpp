@@ -19,13 +19,10 @@
 #include "brpc/ucp_cm.h"
 #include "brpc/socket.h"
 
-#include <gflags/gflags.h>
 #include <sys/socket.h>
 #include <ucs/datastruct/list.h>
 
 namespace brpc {
-
-DEFINE_int32(ucp_receive_lowat_bytes, 16384, "receive buffer low water bytes");
 
 bthread_attr_t ucp_consumer_thread_attr = BTHREAD_ATTR_NORMAL;
 
