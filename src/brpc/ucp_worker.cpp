@@ -282,7 +282,7 @@ ucs_status_t UcpWorker::DoAmCallback(
     UcpConnectionRef& conn = it->second;
     if (conn->state_ == UcpConnection::STATE_CLOSED) {
         LOG(ERROR) << "received am from" << conn->remote_side_str_
-                   << " but connection was already closed";
+                   << " ,but connection was already closed";
         return UCS_OK;
     }
 
@@ -347,7 +347,8 @@ void UcpWorker::DispatchAmMsgQ()
     }
 
     TAILQ_INIT(&tmp_list);
-    TAILQ_CONCAT(&tmp_list, &msg_q_, link); // msg_q is inited by TAILQ_CONCAT
+    TAILQ_CONCAT(&tmp_list, &msg_q_, link);
+    // msg_q is inited by TAILQ_CONCAT
     mutex_.unlock();
 
     while (!TAILQ_EMPTY(&tmp_list)) {
@@ -358,7 +359,8 @@ void UcpWorker::DispatchAmMsgQ()
         UcpConnectionRef conn = msg->conn;
         if (!msg->has_flag(AMF_RNDV)) {
             if (msg->length >= 8) {
-                msg->buf.append_user_data(msg->data, msg->length, ReleaseWorkerData, this);
+                msg->buf.append_user_data(msg->data, msg->length,
+                    ReleaseWorkerData, this);
             } else {
                 msg->buf.append(msg->data, msg->length);
                 ucp_am_data_release(ucp_worker_, msg->data);
