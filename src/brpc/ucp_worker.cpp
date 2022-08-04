@@ -21,12 +21,17 @@
 #include "brpc/ucp_ctx.h"
 #include "brpc/ucp_worker.h"
 
+#include <gflags/gflags.h>
+
 #include <endian.h>
 #include <limits.h>
+#include <poll.h>
 
 #define AM_ID  0
 
 namespace brpc {
+
+DEFINE_int32(brpc_ucp_worker_delay, 100, "Number of microseconds");
 
 UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
     : status_(UNINITIALIZED)
@@ -91,9 +96,8 @@ int UcpWorker::Start()
         goto destroy;
     }
 
-    if (bthread_start_background(&worker_tid_, NULL,
-                                 RunWorker, this) != 0) {
-        LOG(FATAL) << "Fail to start bthread";
+    if (pthread_create(&worker_tid_, NULL, RunWorker, this) != 0) {
+        LOG(FATAL) << "Fail to start worker thread";
         goto destroy;
     }
 
@@ -132,7 +136,7 @@ void UcpWorker::Join()
     }
     mu.unlock();
 
-    bthread_join(worker_tid_, NULL);
+    pthread_join(worker_tid_, NULL);
 
     ucp_worker_destroy(ucp_worker_);
     ucp_worker_ = NULL;
@@ -154,7 +158,8 @@ void UcpWorker::Wakeup()
 
 void UcpWorker::MaybeWakeup()
 {
-    if (bthread_self() != worker_tid_)
+    //if (bthread_self() != worker_tid_)
+    if (pthread_self() != worker_tid_)
         Wakeup();
 }
 
@@ -214,10 +219,18 @@ void* UcpWorker::RunWorker(void *arg)
 
 void UcpWorker::DoRunWorker()
 {
+    struct pollfd poll_info;
+
     mutex_.lock();
     while (status_ != STOPPING) {
         mutex_.unlock();
-        bthread_fd_wait(event_fd_, EPOLLIN);
+
+        if (FLAGS_brpc_ucp_worker_delay) {
+            poll_info.fd = event_fd_;
+            poll_info.events = POLLIN;
+            poll(&poll_info, 1, FLAGS_brpc_ucp_worker_delay);
+        }
+
         mutex_.lock();
 again:
         while (ucp_worker_progress(ucp_worker_))

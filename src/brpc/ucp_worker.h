@@ -119,8 +119,8 @@ private:
     };
     typedef std::list<ExitingEp> exiting_ep_list_t;
     exiting_ep_list_t exiting_ep_;
-    // Acceptor bthread
-    bthread_t worker_tid_;
+    // Acceptor thread
+    pthread_t worker_tid_;
     // Ucp event fd
     int event_fd_;
     // Ucp worker for acceptor
