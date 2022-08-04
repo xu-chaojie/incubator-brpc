@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Authors: Xu Yifeng @ netease
+// Authors: Xu Yifeng
 
 #include "butil/macros.h"
 #include "butil/fd_utility.h"

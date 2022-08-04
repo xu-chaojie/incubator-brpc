@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Authors: Xu Yifeng @ netease
+// Authors: Xu Yifeng
 
 #include "brpc/ucp_connection.h"
 #include "brpc/ucp_worker.h"

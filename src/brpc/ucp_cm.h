@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Authors: Xu Yifeng @ netease
+// Authors: Xu Yifeng
 
 #ifndef BRPC_UCP_CM_H
 #define BRPC_UCP_CM_H
