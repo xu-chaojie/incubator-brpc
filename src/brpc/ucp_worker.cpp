@@ -347,7 +347,7 @@ void UcpWorker::RecycleWorkerData()
 
 void UcpWorker::DispatchAmMsgQ()
 {
-    UcpAmMsg *msg, *msg2;
+    UcpAmMsg *msg, *elem;
     ucp_request_param_t param;
     void *buf;
     size_t len; 
@@ -403,9 +403,9 @@ void UcpWorker::DispatchAmMsgQ()
                         msg->desc, buf, len, &param);
 request_done:
         CHECK(!msg->has_flag(AMF_RECV_Q)) << "already on receive queue";
-        TAILQ_FOREACH_REVERSE(msg2, &conn->recv_q_, UcpAmList, link) {
-            if (msg->sn > msg2->sn) {
-                TAILQ_INSERT_AFTER(&conn->recv_q_, msg2, msg, link);
+        TAILQ_FOREACH_REVERSE(elem, &conn->recv_q_, UcpAmList, link) {
+            if (msg->sn > elem->sn) {
+                TAILQ_INSERT_AFTER(&conn->recv_q_, elem, msg, link);
                 msg->set_flag(AMF_RECV_Q);
                 break;
             }
