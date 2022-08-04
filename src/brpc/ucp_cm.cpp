@@ -32,7 +32,7 @@
 
 namespace brpc {
 
-DEFINE_int32(ucp_workers, 2, "Set the number of ucp workers");
+DEFINE_int32(brpc_ucp_workers, 2, "Number of ucp workers");
 
 static UcpCm *g_cm;
 static std::mutex g_cm_mutex;
@@ -46,7 +46,7 @@ get_or_create_ucp_cm(void)
     BAIDU_SCOPED_LOCK(g_cm_mutex);
     if (g_cm == NULL) {
         UcpCm *cm = new UcpCm;
-        int rc = cm->Start(FLAGS_ucp_workers);
+        int rc = cm->Start(FLAGS_brpc_ucp_workers);
         CHECK(rc == 0) << "Failed to start ucp connection manager";
         __sync_synchronize();
         g_cm = cm;
