@@ -36,6 +36,7 @@ UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
     , ucp_worker_(NULL)
     , free_data_(NULL)
     , free_data_count_(0)
+    , send_list_(NULL)
 {
     TAILQ_INIT(&msg_q_);
     TAILQ_INIT(&recv_comp_q_);
@@ -219,13 +220,14 @@ void UcpWorker::DoRunWorker()
         bthread_fd_wait(event_fd_, EPOLLIN);
         mutex_.lock();
 again:
-        while (ucp_worker_progress(ucp_worker_)) {
-            DispatchAmMsgQ();
-            DispatchRecvCompQ();
-            DispatchDataReady();
-            CheckExitingEp();
-            RecycleFreeData();
-        }
+        while (ucp_worker_progress(ucp_worker_))
+            ;
+        DispatchAmMsgQ();
+        DispatchRecvCompQ();
+        KeepSendRequest();
+        DispatchDataReady();
+        CheckExitingEp();
+        RecycleWorkerData();
         ucs_status_t stat = ucp_worker_arm(ucp_worker_);
         if (stat == UCS_ERR_BUSY) /* some events are arrived already */
             goto again;
@@ -278,9 +280,15 @@ ucs_status_t UcpWorker::DoAmCallback(
     }
 
     UcpConnectionRef& conn = it->second;
+    if (conn->state_ == UcpConnection::STATE_CLOSED) {
+        LOG(ERROR) << "received am from" << conn->remote_side_str_
+                   << " but connection was already closed";
+        return UCS_OK;
+    }
+
     UcpAmMsg *msg = UcpAmMsg::Allocate();
     if (msg == NULL) {
-        LOG(ERROR) << "can not allocate UcpMsg";
+        LOG(FATAL) << "can not allocate UcpMsg";
         return UCS_OK;
     }
     msg->conn = conn;
@@ -308,6 +316,19 @@ void UcpWorker::ReleaseWorkerData(void *data, void *arg)
     if (++w->free_data_count_ > 100) {
         w->free_data_count_ = 0;
         w->MaybeWakeup();
+    }
+}
+
+void UcpWorker::RecycleWorkerData()
+{
+    if (!free_data_.load(std::memory_order_relaxed))
+        return;
+    free_data_count_ = 0;
+    void *p = free_data_.exchange(NULL, std::memory_order_release);
+    while (p) {
+        void *next = *(void **)p;
+        ucp_am_data_release(ucp_worker_, p);
+        p = next;
     }
 }
 
@@ -461,25 +482,70 @@ bool UcpWorker::CheckConnRecvQ(const UcpConnectionRef& conn)
 {
     bool avail = false;
 
-    conn->io_mutex_.lock();
     while (!TAILQ_EMPTY(&conn->recv_q_)) {
         UcpAmMsg *msg = TAILQ_FIRST(&conn->recv_q_);
         if (!msg->has_flag(AMF_FINISH))
             break;
+        if (conn->state_ == UcpConnection::STATE_CLOSED) {
+            TAILQ_REMOVE(&conn->recv_q_, msg, link);
+            UcpAmMsg::Release(msg);
+            continue;
+        }
+        if (msg->sn != conn->expect_sn_)
+            break;
+        avail = true;
         CHECK(msg->has_flag(AMF_RECV_Q)) << "not on recv queue";
         CHECK(!msg->has_flag(AMF_COMP_Q)) << "still on comp queue";
-        if (msg->code == UCS_OK) {
-            conn->in_buf_.append(butil::IOBuf::Movable(msg->buf));
-        } else {
-            conn->ucp_code_.store(msg->code);
-        }
-        avail = true;
         TAILQ_REMOVE(&conn->recv_q_, msg, link);
         msg->clear_flag(AMF_RECV_Q);
+
+        SaveInputMessage(conn, msg);
+        conn->expect_sn_++;
+    }
+    return avail;
+}
+
+void UcpWorker::SaveInputMessage(const UcpConnectionRef &conn, UcpAmMsg *msg)
+{
+    UcpAmMsg *ptr;
+
+    do {
+        ptr = conn->ready_list_.load(std::memory_order_relaxed);
+        msg->link.tqe_next = ptr;
+    } while (!conn->ready_list_.compare_exchange_strong(ptr, msg,
+             std::memory_order_release));
+}
+
+void UcpWorker::MergeInputMessage(UcpConnection *conn)
+{
+    UcpAmMsg *msg = NULL, *prev = NULL, *next = NULL;
+
+    // assert(mutex_.is_locked_by_me());
+    if (!conn->ready_list_.load(std::memory_order_relaxed))
+        return;
+
+    msg = conn->ready_list_.exchange(NULL, std::memory_order_acquire);
+    // Reverse the list to dispatch it in order
+    prev = NULL;
+    while (msg) {
+        next = msg->link.tqe_next;
+        msg->link.tqe_next = prev;
+        prev = msg;
+        msg = next;
+    }
+    for (msg = prev; msg; msg = next) {
+        next = msg->link.tqe_next;
+        // If receiving error already occurred, skip any left message
+        if (!conn->ucp_recv_code_.load(butil::memory_order_relaxed)) {
+            if (msg->code == UCS_OK) {
+                conn->in_buf_.append(butil::IOBuf::Movable(msg->buf));
+            } else {
+                conn->ucp_recv_code_.store(msg->code);
+                conn->ucp_code_.store(msg->code);
+            }
+        }
         UcpAmMsg::Release(msg);
     }
-    conn->io_mutex_.unlock();
-    return avail;
 }
 
 int UcpWorker::Accept(UcpConnection *conn, ucp_conn_request_h req)
@@ -504,6 +570,8 @@ int UcpWorker::Connect(UcpConnection *conn, const butil::EndPoint &peer)
         CHECK(it == conn_map_.end()) << "repeated ep ?";
         conn_map_[conn->ep_] = conn;
         conn->remote_side_ = peer;
+        auto str = butil::endpoint2str(peer);
+        conn->remote_side_str_ = str.c_str();
         MaybeWakeup();
     }
     return ret;
@@ -527,6 +595,21 @@ void UcpWorker::ErrorCallback(void *arg, ucp_ep_h ep, ucs_status_t status)
     w->SetDataReadyLocked(conn);
 }
 
+void UcpWorker::CancelRequests(const UcpConnectionRef &conn)
+{
+    UcpAmMsg *msg, *next = NULL;
+
+    for (msg = TAILQ_FIRST(&conn->recv_q_); msg; msg = next) {
+        next = TAILQ_NEXT(msg, link);
+        if (!msg->has_flag(AMF_FINISH)) {
+            ucp_request_cancel(ucp_worker_, msg->req);
+        } else {
+            TAILQ_REMOVE(&conn->recv_q_, msg, link);
+            UcpAmMsg::Release(msg); 
+        }
+    }
+}
+
 // Release the connection object indexed by ep, and gracefully disconnect it
 void UcpWorker::Release(UcpConnectionRef conn)
 {
@@ -540,6 +623,8 @@ void UcpWorker::Release(UcpConnectionRef conn)
         conn_map_.erase(it);
     }
 
+    CancelRequests(conn);
+
     request = ucp_ep_close_nb(ep, UCP_EP_CLOSE_MODE_FLUSH);
     if (request == NULL) {
         conn->ep_ = NULL;
@@ -547,7 +632,8 @@ void UcpWorker::Release(UcpConnectionRef conn)
         return;
     } else if (UCS_PTR_IS_ERR(request)) {
         conn->ep_ = NULL;
-        LOG(ERROR) << "ucp_ep_close_nb(" << ep << ") failed with status ("
+        LOG(ERROR) << "ucp_ep_close_nb(" << conn->remote_side_str_
+                   << ") failed with status ("
                    << ucs_status_string(UCS_PTR_STATUS(request)) << ")";
         return;
     }
@@ -593,6 +679,8 @@ int UcpWorker::CreateUcpEp(UcpConnection *conn, ucp_conn_request_h req)
             conn->remote_side_ =
                 butil::EndPoint(*(sockaddr_in*)&attr.remote_sockaddr,
                                 butil::EndPoint::UCP);
+            auto str = butil::endpoint2str(conn->remote_side_);
+            conn->remote_side_str_ = str.c_str();
         }
     }
     return rc;
@@ -600,14 +688,7 @@ int UcpWorker::CreateUcpEp(UcpConnection *conn, ucp_conn_request_h req)
 
 ssize_t UcpWorker::StartRecv(UcpConnection *conn)
 {
-    bool empty;
-
-    conn->io_mutex_.lock();
-    empty = conn->in_buf_.empty() && conn->ucp_code_.load() == 0;
-    conn->io_mutex_.unlock();
-
-    if (!empty)
-        SetDataReady(conn);  
+    SetDataReady(conn);  
     return 0;
 }
 
@@ -650,26 +731,100 @@ void UcpWorker::AmSendCb(void *request, ucs_status_t status, void *user_data)
     UcpAmSendInfo *msg = (UcpAmSendInfo *)user_data;
     UcpConnectionRef conn = msg->conn;
 
+    TAILQ_REMOVE(&conn->send_q_, msg, link);
     if (status != UCS_OK) {
         conn->ucp_code_.store(status);
         conn->worker_->SetDataReadyLocked(msg->conn);
     }
     
-    TAILQ_REMOVE(&conn->send_q_, msg, link);
     ucp_request_free(msg->req);
     UcpAmSendInfo::Release(msg);
+}
+
+void UcpWorker::SetupSendRequestParam(const UcpAmSendInfo *msg,
+    ucp_request_param_t *param, void **buf, size_t *len)
+{
+    memset(param, 0, sizeof(*param));
+    param->op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
+                          UCP_OP_ATTR_FIELD_DATATYPE |
+                          UCP_OP_ATTR_FIELD_USER_DATA|
+                          UCP_OP_ATTR_FIELD_FLAGS;
+    param->flags = UCP_AM_SEND_FLAG_REPLY;
+    param->datatype = (msg->nvec == 1) ? ucp_dt_make_contig(1) :
+                     ucp_dt_make_iov();
+    param->user_data = (void *)(msg);
+    param->cb.send = AmSendCb;
+    *buf = (msg->nvec == 1) ? msg->iov[0].buffer : (void *)&msg->iov[0];
+    *len = (msg->nvec == 1) ? msg->iov[0].length : msg->nvec;
+}
+
+void UcpWorker::SendRequest(UcpAmSendInfo *msg)
+{
+    UcpAmSendInfo *ptr;
+
+    do {
+        ptr = send_list_.load(std::memory_order_acquire);
+        msg->link.tqe_next = ptr;
+    } while (!send_list_.compare_exchange_strong(ptr, msg,
+             std::memory_order_release));
+}
+
+void UcpWorker::KeepSendRequest(void)
+{
+    ucp_request_param_t param;
+    UcpAmSendInfo *msg = NULL, *prev = NULL, *next = NULL;
+    void *buf = NULL;
+    size_t len = 0;
+
+    // assert(mutex_.is_locked_by_me());
+    if (!send_list_.load(std::memory_order_relaxed))
+        return;
+    msg = send_list_.exchange(NULL, std::memory_order_acquire);
+
+    // Reverse the list to dispatch it in order
+    prev = NULL;
+    while (msg) {
+        next = msg->link.tqe_next;
+        msg->link.tqe_next = prev;
+        prev = msg;
+        msg = next;
+    }
+
+    for (msg = prev; msg; msg = next) {
+        next = msg->link.tqe_next;
+
+        SetupSendRequestParam(msg, &param, &buf, &len);
+
+        UcpConnectionRef &conn = msg->conn;
+        TAILQ_INSERT_TAIL(&conn->send_q_, msg, link);
+
+        msg->req = ucp_am_send_nbx(conn->ep_, AM_ID, &msg->header,
+            sizeof(msg->header), buf, len, &param);
+        if (msg->req == NULL) {
+            TAILQ_REMOVE(&conn->send_q_, msg, link);
+            UcpAmSendInfo::Release(msg);
+        } else if (UCS_PTR_IS_ERR(msg->req)) {
+            TAILQ_REMOVE(&conn->send_q_, msg, link);
+            ucs_status_t st = UCS_PTR_STATUS(msg->req);
+            conn->ucp_code_.store(st);
+            SetDataReadyLocked(conn);
+            UcpAmSendInfo::Release(msg);
+            LOG(ERROR) << "Failed to ucp_am_send_nbx("
+                       << ucs_status_string(st) << ")";
+        }
+
+        msg = next;
+    }
 }
 
 ssize_t UcpWorker::StartSend(UcpConnection *conn,
     butil::IOBuf *data_list[], int ndata)
 {
-    ucp_request_param_t param;
-    void *buf = NULL;
     size_t total = 0;
-    size_t len = 0;
+    int err = 0;
 
     if (conn->ucp_code_.load()) {
-        errno = EIO;
+        errno = ENOTCONN;
         return -1;
     }
     if (data_list == NULL || ndata == 0)
@@ -679,66 +834,21 @@ ssize_t UcpWorker::StartSend(UcpConnection *conn,
         UcpAmSendInfo *msg = UcpAmSendInfo::Allocate();
         if (msg == NULL) {
             LOG(ERROR) << "cannot allocater UcpAmSendInfo";
-            return total;
+            err = ENOMEM;
+            break;
         }
         msg->conn = conn;
         msg->header.sn = htole64(conn->next_send_sn_);
         msg->buf.append(butil::IOBuf::Movable(*data_list[i]));
         msg->buf.fill_ucp_iov(&msg->iov, INT_MAX,
                               &msg->nvec, ULONG_MAX);
-        buf = (msg->nvec == 1) ? msg->iov[0].buffer : (void *)&msg->iov[0];
-        len = (msg->nvec == 1) ? msg->iov[0].length : msg->nvec;
-
-        memset(&param, 0, sizeof(param));
-        param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
-                             UCP_OP_ATTR_FIELD_DATATYPE |
-                             UCP_OP_ATTR_FIELD_USER_DATA|
-                             UCP_OP_ATTR_FIELD_FLAGS;
-        param.flags = UCP_AM_SEND_FLAG_REPLY;
-        param.datatype = (msg->nvec == 1) ? ucp_dt_make_contig(1) :
-                         ucp_dt_make_iov();
-        param.user_data = msg;
-        param.cb.send = AmSendCb;
-        mutex_.lock();
-        TAILQ_INSERT_TAIL(&conn->send_q_, msg, link);
-        msg->req = ucp_am_send_nbx(conn->ep_, AM_ID, &msg->header, sizeof(msg->header), buf, len, &param);
-        if (msg->req == NULL) {
-            TAILQ_REMOVE(&conn->send_q_, msg, link);
-            total += msg->buf.length();
-            mutex_.unlock();
-            UcpAmSendInfo::Release(msg);
-            conn->next_send_sn_++;
-        } else if (UCS_PTR_IS_ERR(msg->req)) {
-            TAILQ_REMOVE(&conn->send_q_, msg, link);
-            ucs_status_t st = UCS_PTR_STATUS(msg->req);
-            conn->ucp_code_.store(st);
-            SetDataReadyLocked(conn);
-            mutex_.unlock();
-            UcpAmSendInfo::Release(msg);
-            LOG(ERROR) << "Failed to ucp_am_send_nbx("
-                       << ucs_status_string(st) << ")";
-            errno = EIO;
-            return total ? total : -1;
-        } else {
-            total += msg->buf.length();
-            mutex_.unlock();
-            conn->next_send_sn_++;
-        }
+        total += msg->buf.length();
+        SendRequest(msg);
+        conn->next_send_sn_++;
     }
-    return total;
-}
-
-void UcpWorker::RecycleFreeData()
-{
-    if (!free_data_.load(std::memory_order_relaxed))
-        return;
-    free_data_count_ = 0;
-    void *p = free_data_.exchange(NULL, std::memory_order_release);
-    while (p) {
-        void *next = *(void **)p;
-        ucp_am_data_release(ucp_worker_, p);
-        p = next;
-    }
+    MaybeWakeup();
+    errno = err;
+    return total ? total : -1;
 }
 
 } // namespace brpc

@@ -50,6 +50,7 @@ UcpAmMsg *UcpAmMsg::Allocate(void)
 
 void UcpAmMsg::Release(UcpAmMsg *o)
 {
+    o->conn.reset();
     o->sn = -1;
     o->data = nullptr;
     o->length = 0;
@@ -79,6 +80,7 @@ UcpAmSendInfo *UcpAmSendInfo::Allocate(void)
 
 void UcpAmSendInfo::Release(UcpAmSendInfo *o)
 {
+    o->conn.reset();
     o->header.sn = -1;
     o->code = UCS_OK;
     o->req = nullptr;
@@ -92,10 +94,13 @@ UcpConnection::UcpConnection(UcpCm *cm, UcpWorker *w)
     , worker_(w)
     , ep_(NULL)
     , ucp_code_(UCS_OK)
+    , ucp_recv_code_(UCS_OK)
     , socket_id_(-1)
     , socket_id_set_(false)
     , state_(STATE_NONE)
     , data_ready_flag_(false)
+    , expect_sn_(0)
+    , ready_list_(NULL)
 {
     bthread_rwlock_init(&mutex_, NULL);
     remote_side_.set_ucp();
@@ -110,6 +115,7 @@ UcpConnection::~UcpConnection()
         LOG(ERROR) << "ep_ should be NULL";
     }
     bthread_rwlock_destroy(&mutex_);
+    LOG(INFO) << __func__;
 }
 
 int UcpConnection::Accept(ucp_conn_request_h req)
@@ -191,11 +197,9 @@ ssize_t UcpConnection::Read(butil::IOBuf *out, size_t size_hint)
         return 0;
     }
 
-    {
-        // Try to read from input buffer
-        BAIDU_SCOPED_LOCK(io_mutex_);
-        rc = in_buf_.cutn(out, size_hint); 
-    }
+    worker_->MergeInputMessage(this);
+
+    rc = in_buf_.cutn(out, size_hint); 
 
     if (rc == 0) {
         if (ucp_code_.load()) // IO error happened, return EOF

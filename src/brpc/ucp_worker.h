@@ -86,9 +86,17 @@ private:
     bool CheckConnRecvQ(const UcpConnectionRef& conn);
     static void AmSendCb(void *request, ucs_status_t status,
                          void *user_data);
+    void SetupSendRequestParam(const UcpAmSendInfo *msg,
+            ucp_request_param_t *param, void **buf, size_t *len);
     static void ErrorCallback(void *arg, ucp_ep_h, ucs_status_t);
     static void ReleaseWorkerData(void *data, void *arg);
-    void RecycleFreeData();
+    void RecycleWorkerData();
+    void SendRequest(brpc::UcpAmSendInfo*);
+    void KeepSendRequest(void);
+    void CancelRequests(const UcpConnectionRef &ref);
+    void SaveInputMessage(const UcpConnectionRef &conn, UcpAmMsg *msg);
+    void MergeInputMessage(UcpConnection *conn);
+
 private:
     bthread::Mutex mutex_;
     bthread::Mutex external_mutex_;
@@ -124,6 +132,9 @@ private:
 
     std::atomic<void *>free_data_;
     int free_data_count_;
+
+    std::atomic<UcpAmSendInfo *>send_list_;
+
     friend class UcpConnection;
 };
 

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Authors: Xu Yifeng @ netease
+// Authors: Xu Yifeng
 
 #ifndef BRPC_UCP_CONNECTION_H
 #define BRPC_UCP_CONNECTION_H
@@ -138,24 +138,28 @@ private:
     };
 
     mutable bthread::v2::bthread_rwlock_t mutex_;
-    bthread::ConditionVariable cond_;
     UcpCm *cm_;
     UcpWorker *worker_;
     ucp_ep_h ep_;
     butil::atomic<ucs_status_t> ucp_code_;
+    butil::atomic<ucs_status_t> ucp_recv_code_;
     butil::atomic<SocketId> socket_id_;
     int socket_id_set_;
     int state_;
+    butil::IOPortal in_buf_;
+
     // Cached remote address
     butil::EndPoint remote_side_;
+    std::string remote_side_str_;
 
     // Populated by UcpWorker
     bool data_ready_flag_;
-    mutable bthread::Mutex io_mutex_;
-    butil::IOPortal in_buf_;
+    uint64_t expect_sn_;
     UcpAmList recv_q_;
     UcpAmSendList send_q_;
     uint64_t next_send_sn_;
+    butil::atomic<UcpAmMsg *> ready_list_;
+
     friend class UcpCm;
     friend class UcpWorker;
 };
