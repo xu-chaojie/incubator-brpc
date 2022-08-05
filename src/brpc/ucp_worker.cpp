@@ -161,7 +161,6 @@ void UcpWorker::Wakeup()
 
 void UcpWorker::MaybeWakeup()
 {
-    //if (bthread_self() != worker_tid_)
     if (pthread_self() != worker_tid_)
         Wakeup();
 }
@@ -244,15 +243,14 @@ again:
         DispatchDataReady();
         CheckExitingEp();
         RecycleWorkerData();
+        mutex_.unlock();
+        InvokeExternalEvents();
+        mutex_.lock();
         ucs_status_t stat = ucp_worker_arm(ucp_worker_);
         if (stat == UCS_ERR_BUSY) /* some events are arrived already */
             goto again;
         CHECK(stat == UCS_OK) << "ucx_worker_arm failed ("
             << ucs_status_string(stat) << ")";
-
-        mutex_.unlock();
-        InvokeExternalEvents();
-        mutex_.lock();
     }
     mutex_.unlock();
 }
@@ -791,16 +789,24 @@ void UcpWorker::SetupSendRequestParam(const UcpAmSendInfo *msg,
     *len = (msg->nvec == 1) ? msg->iov[0].length : msg->nvec;
 }
 
-void UcpWorker::SendRequest(UcpAmSendInfo *msg)
+void UcpWorker::SendRequest(UcpAmSendInfo *msgs[], int size)
 {
-    UcpAmSendInfo *ptr;
+    UcpAmSendInfo *ptr, *head, *tail;
 
-    // Just hang the request on send_list_, caller should
+    for (int i = size-1; i > 0; --i) {
+         msgs[i]->link.tqe_next = msgs[i-1];
+    }
+    head = msgs[size-1];
+    tail = msgs[0];
+
+    // Just hang the requests on send_list_, caller should
     // signal worker to send 
     do {
-        ptr = send_list_.load(std::memory_order_acquire);
-        msg->link.tqe_next = ptr;
-    } while (!send_list_.compare_exchange_strong(ptr, msg,
+        // here we don't read other thread's data, so we use
+        // relaxed memory order
+        ptr = send_list_.load(std::memory_order_relaxed);
+        tail->link.tqe_next = ptr;
+    } while (!send_list_.compare_exchange_strong(ptr, head,
              std::memory_order_release));
 }
 
@@ -855,6 +861,10 @@ void UcpWorker::KeepSendRequest(void)
 ssize_t UcpWorker::StartSend(UcpConnection *conn,
     butil::IOBuf *data_list[], int ndata)
 {
+    // Use batch submit to reduce atomic operations
+    const int BATCH_SEND_SIZE = 6;
+    UcpAmSendInfo *batch[BATCH_SEND_SIZE];
+    int batch_num = 0;
     size_t total = 0;
     int err = 0;
 
@@ -878,9 +888,17 @@ ssize_t UcpWorker::StartSend(UcpConnection *conn,
         msg->buf.fill_ucp_iov(&msg->iov, INT_MAX,
                               &msg->nvec, ULONG_MAX);
         total += msg->buf.length();
-        SendRequest(msg);
+        batch[batch_num++] = msg;
+        if (batch_num == BATCH_SEND_SIZE) {
+            SendRequest(batch, batch_num);
+            batch_num = 0;
+        }
         conn->next_send_sn_++;
     }
+    if (batch_num != 0) {
+        SendRequest(batch, batch_num);
+    }
+ 
     MaybeWakeup();
     errno = err;
     return total ? total : -1;

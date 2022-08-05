@@ -91,7 +91,7 @@ private:
     static void ErrorCallback(void *arg, ucp_ep_h, ucs_status_t);
     static void ReleaseWorkerData(void *data, void *arg);
     void RecycleWorkerData();
-    void SendRequest(brpc::UcpAmSendInfo*);
+    void SendRequest(brpc::UcpAmSendInfo* [], int size);
     void KeepSendRequest(void);
     void CancelRequests(const UcpConnectionRef &ref);
     void SaveInputMessage(const UcpConnectionRef &conn, UcpAmMsg *msg);
@@ -125,6 +125,7 @@ private:
     int event_fd_;
     // Ucp worker for acceptor
     ucp_worker_h ucp_worker_;
+    bool out_of_order_;
 
     std::queue<UcpConnectionRef> data_ready_;
     UcpAmList msg_q_;
