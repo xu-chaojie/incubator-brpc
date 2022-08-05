@@ -32,7 +32,7 @@ UCP_Context *g_ucp_ctx;
 static pthread_once_t g_ucp_ctx_init = PTHREAD_ONCE_INIT;
 
 static void init_ucx_ctx() {
-    LOG(INFO) << "running with ucp library version: " << ucp_get_version_string();
+    LOG(INFO) << "Running with ucp library version: " << ucp_get_version_string();
 
     g_ucp_ctx = new UCP_Context;
     if (g_ucp_ctx->init()) {
