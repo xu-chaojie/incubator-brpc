@@ -161,6 +161,8 @@ void UcpWorker::Wakeup()
 
 void UcpWorker::MaybeWakeup()
 {
+    if (FLAGS_brpc_ucp_worker_delay == 0)
+        return;
     if (pthread_self() != worker_tid_)
         Wakeup();
 }
@@ -170,7 +172,7 @@ void UcpWorker::DispatchExternalEvent(EventCallbackRef e)
     mutex_.lock();
     external_events_.push_back(e);
     mutex_.unlock();
-    Wakeup();
+    MaybeWakeup();
 }
 
 void UcpWorker::InvokeExternalEvents()
@@ -204,7 +206,7 @@ bool UcpWorker::SetAmCallback()
     param.flags      = UCP_AM_FLAG_WHOLE_MSG | UCP_AM_FLAG_PERSISTENT_DATA;
     status           = ucp_worker_set_am_recv_handler(ucp_worker_, &param);
     if (status != UCS_OK) {
-        LOG(ERROR) << "can not set am handler";
+        LOG(ERROR) << "Can not set am handler";
         return false;
     }
     return true;
@@ -239,7 +241,8 @@ again:
         CheckExitingEp();
         RecycleWorkerData();
         InvokeExternalEvents();
-        ucs_status_t stat = ucp_worker_arm(ucp_worker_);
+        ucs_status_t stat = FLAGS_brpc_ucp_worker_delay ?
+            ucp_worker_arm(ucp_worker_) : UCS_OK;
         mutex_.unlock();
         if (stat == UCS_ERR_BUSY) /* some events are arrived already */
             goto again;
@@ -282,19 +285,19 @@ ucs_status_t UcpWorker::DoAmCallback(
     }
     if (!(param->recv_attr & (UCP_AM_RECV_ATTR_FLAG_DATA |
                               UCP_AM_RECV_ATTR_FLAG_RNDV))) {
-        LOG(ERROR) << "neither UCP_AM_RECV_ATTR_FIELD_DATA nor UCP_AM_RECV_ATTR_FLAG_RNDV is set";
+        LOG(ERROR) << "Neither UCP_AM_RECV_ATTR_FIELD_DATA nor UCP_AM_RECV_ATTR_FLAG_RNDV is set";
         return UCS_OK;
     }
 
     auto it = conn_map_.find(param->reply_ep);
     if (it == conn_map_.end()) {
-        LOG(ERROR) << "can not find ep in conn_map_";
+        LOG(ERROR) << "Can not find ep in conn_map_";
         return UCS_OK;
     }
 
     UcpConnectionRef& conn = it->second;
     if (conn->state_ == UcpConnection::STATE_CLOSED) {
-        LOG(ERROR) << "received am from" << conn->remote_side_str_
+        LOG(ERROR) << "Received am from" << conn->remote_side_str_
                    << " ,but connection was already closed";
         return UCS_OK;
     }
@@ -446,11 +449,11 @@ void UcpWorker::DoAmRecvCallback(UcpAmMsg *msg, ucs_status_t status,
     msg->code = status;
     CHECK(msg->length == length) << "strange, length not equal, expect "
                                  << msg->length << ", actual " << length;
-    CHECK(!msg->has_flag(AMF_COMP_Q)) << "already on complete queue";
+    CHECK(!msg->has_flag(AMF_COMP_Q)) << "Already on complete queue";
     TAILQ_INSERT_TAIL(&recv_comp_q_, msg, comp_link);
     msg->set_flag(AMF_COMP_Q);
     if (status != UCS_OK) {
-        LOG(ERROR ) << "receive with error ("
+        LOG(ERROR ) << "Receive with error ("
                     << ucs_status_string(status) << ")"
                     << " from " << msg->conn->remote_side_str_;
     }
@@ -636,14 +639,13 @@ void UcpWorker::ErrorCallback(void *arg, ucp_ep_h ep, ucs_status_t status)
     // assert(w->mutex_.is_locked());
     auto it = w->conn_map_.find(ep);
     if (it == w->conn_map_.end()) {
-        LOG(ERROR) << "can not find ep in ErrorCallback, may be moved";
+        LOG(ERROR) << "Can not find ep in ErrorCallback, may be moved";
         return;
     }
     UcpConnectionRef conn = it->second;
     butil::EndPointStr str = endpoint2str(conn->remote_side_);
-    LOG(ERROR) << "Error occurred on ep " << ep << "," << str.c_str()
-               << ", with status " << status
-               << "(" << ucs_status_string(status) << ")";
+    LOG(ERROR) << "Error occurred on remote side " << str.c_str()
+               << " (" << ucs_status_string(status) << ")";
     conn->ucp_code_.store(status ? status : UCS_ERR_IO_ERROR);
     w->SetDataReadyLocked(conn);
 }
@@ -912,7 +914,7 @@ ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn,
     for (int i = 0; i < ndata; ++i) {
         UcpAmSendInfo *msg = UcpAmSendInfo::Allocate();
         if (msg == NULL) {
-            LOG(ERROR) << "cannot allocater UcpAmSendInfo";
+            LOG(ERROR) << "Cannot allocater UcpAmSendInfo";
             err = ENOMEM;
             break;
         }
