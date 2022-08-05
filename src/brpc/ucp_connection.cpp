@@ -18,17 +18,25 @@
 #include "brpc/ucp_worker.h"
 #include "brpc/ucp_cm.h"
 #include "brpc/socket.h"
+#include "bvar/bvar.h"
 
+#include <string.h>
+#include <gflags/gflags.h>
 #include <sys/socket.h>
 #include <ucs/datastruct/list.h>
 
 namespace brpc {
 
+DEFINE_int32(brpc_ucp_ping_timeout, 10, "Number of seconds");
+
 bthread_attr_t ucp_consumer_thread_attr = BTHREAD_ATTR_NORMAL;
+static bvar::Adder<int> g_ucp_conn("ucp_connection_count");
 
 UcpAmMsg::UcpAmMsg()
 {
-    sn = -1;
+    header.cmd = UCP_CMD_BRPC;
+    header.pad = 0;
+    header.sn = -1;
     data = nullptr;
     length = 0;
     nvec = 0;
@@ -48,7 +56,9 @@ UcpAmMsg *UcpAmMsg::Allocate(void)
 void UcpAmMsg::Release(UcpAmMsg *o)
 {
     o->conn.reset();
-    o->sn = -1;
+    o->header.cmd = UCP_CMD_BRPC;
+    o->header.pad = 0;
+    o->header.sn = -1;
     o->data = nullptr;
     o->length = 0;
     o->nvec = 0;
@@ -99,11 +109,13 @@ UcpConnection::UcpConnection(UcpCm *cm, UcpWorker *w)
     , expect_sn_(0)
     , ready_list_(NULL)
 {
+    ping_seq_ = 0;
     bthread_rwlock_init(&mutex_, NULL);
     remote_side_.set_ucp();
     TAILQ_INIT(&recv_q_);
     TAILQ_INIT(&send_q_);
     next_send_sn_ = 0;
+    g_ucp_conn << 1;
 }
 
 UcpConnection::~UcpConnection()
@@ -112,7 +124,8 @@ UcpConnection::~UcpConnection()
         LOG(ERROR) << "ep_ should be NULL";
     }
     bthread_rwlock_destroy(&mutex_);
-    LOG(INFO) << __func__;
+    DLOG(INFO) << __func__ << " " << this;
+    g_ucp_conn << -1;
 }
 
 int UcpConnection::Accept(ucp_conn_request_h req)
@@ -145,6 +158,9 @@ void UcpConnection::Close()
         return;
     }
     state_ = STATE_CLOSED;
+
+    WakePing();
+
     worker_->Release(this);
 }
 
@@ -152,6 +168,12 @@ SocketId UcpConnection::GetSocketId() const
 {
     return socket_id_;
 }  
+
+void UcpConnection::WakePing()
+{
+    std::unique_lock<bthread::Mutex> lg(ping_mutex_);
+    ping_cond_.notify_all();
+}
 
 void UcpConnection::SetSocketId(SocketId id)
 {
@@ -174,12 +196,16 @@ void UcpConnection::DataReady()
         Socket::StartInputEvent(socket_id_, EPOLLIN, ucp_consumer_thread_attr);
     else {
         if (state_ != STATE_OPEN) {
-            LOG(WARNING) << "brpc::Socket is closed, "
-                            "DataReady does not notify the socket";
+            DLOG(WARNING) << "brpc::Socket is closed, "
+                             "DataReady does not notify the socket";
         } else {
-            LOG(WARNING) << "brpc::Socket id is not set, "
-                            "DataReady does not notify the socket";
+            DLOG(WARNING) << "brpc::Socket id is not set, "
+                             "DataReady does not notify the socket";
         }
+    }
+    if (ucp_code_.load(butil::memory_order_relaxed) ||
+        ucp_recv_code_.load(butil::memory_order_relaxed)) {
+        WakePing();
     }
 }
 
@@ -233,12 +259,82 @@ ssize_t UcpConnection::Write(butil::IOBuf *data_list[], int ndata)
         return -1;
     }
 
-    ssize_t len = worker_->StartSend(this, data_list, ndata);
+    ssize_t len = worker_->StartSend(UCP_CMD_BRPC, this, data_list, ndata);
     if (ucp_code_.load()) {
         errno = ECONNRESET;
         return -1;
     }
     return len;
+}
+
+int UcpConnection::Ping(const timespec* abstime)
+{
+    int rc = DoPing(abstime);
+    if (rc) {
+        int err = errno;
+        LOG(ERROR) << "Ping " << remote_side_str_ << " (" << strerror(err) << ")";
+        errno = err;
+    }
+    return rc;
+}
+
+int UcpConnection::DoPing(const timespec* abstime)
+{
+    butil::IOBuf buf;
+    struct timespec ts;
+
+    if (abstime == NULL) {
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += FLAGS_brpc_ucp_ping_timeout;
+        abstime = &ts;
+    }
+    bthread::v2::rlock_guard lg(mutex_);
+
+    if (state_ != STATE_OPEN) {
+        errno = ENOTCONN;
+        return -1;
+    }
+
+    if (ucp_code_.load()) {
+        errno = ECONNRESET;
+        return -1;
+    }
+
+    buf.append("ping", 5);
+
+    ping_mutex_.lock();
+    int old = ping_seq_;
+    ping_mutex_.unlock();
+
+    ssize_t rc = worker_->StartSend(UCP_CMD_PING, this, &buf);
+    if (rc == -1) {
+        return -1;
+    }
+
+    lg.unlock();
+
+    rc = 0;
+    std::unique_lock<bthread::Mutex> pg(ping_mutex_);
+    while (rc == 0 && old == ping_seq_ && state_ != STATE_CLOSED &&
+           ucp_code_.load() == 0 && ucp_recv_code_.load() == 0) {
+        rc = ping_cond_.wait_until(pg, *abstime);
+    }
+    if (rc == 0) {
+        if (state_ == STATE_CLOSED)
+            rc = ENOTCONN;
+        else if (ucp_code_.load() || ucp_recv_code_.load())
+            rc = ECONNRESET;
+    }
+    errno = rc;
+    return rc ? -1 : 0;
+}
+
+void UcpConnection::HandlePong(UcpAmMsg *msg)
+{
+    std::unique_lock<bthread::Mutex> lg(ping_mutex_);
+    ping_seq_++;
+    ping_cond_.notify_all();
+    UcpAmMsg::Release(msg);
 }
 
 } // namespace brpc

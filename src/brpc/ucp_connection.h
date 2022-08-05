@@ -41,7 +41,15 @@ class UcpConnection;
 
 typedef butil::intrusive_ptr<UcpConnection> UcpConnectionRef;
 
+enum {
+    UCP_CMD_BRPC,
+    UCP_CMD_PING,
+    UCP_CMD_PONG
+};
+
 struct MsgHeader {
+    int32_t cmd;
+    int32_t pad;
     uint64_t sn;
 };
 
@@ -64,7 +72,7 @@ struct UcpAmMsg {
     TAILQ_ENTRY(UcpAmMsg) link;
     TAILQ_ENTRY(UcpAmMsg) comp_link;
     UcpConnectionRef conn;
-    uint64_t sn;
+    MsgHeader header;
     union {
         void *desc;
         void *data;
@@ -124,11 +132,16 @@ public:
     ssize_t Read(butil::IOBuf *out, size_t n); 
     ssize_t Write(butil::IOBuf *buf); 
     ssize_t Write(butil::IOBuf *data_list[], int ndata);
+    int Ping(const timespec* abstime);
+
 private:
     void Close();
     int Accept(ucp_conn_request_h req);
     int Connect(const butil::EndPoint &peer);
     void DataReady();
+    void HandlePong(UcpAmMsg *msg);
+    void WakePing(); 
+    int DoPing(const struct timespec *abstime);
 
 private:
     enum {
@@ -138,6 +151,11 @@ private:
     };
 
     mutable bthread::v2::bthread_rwlock_t mutex_;
+
+    bthread::Mutex ping_mutex_;
+    bthread::ConditionVariable ping_cond_;
+    int ping_seq_;
+
     UcpCm *cm_;
     UcpWorker *worker_;
     ucp_ep_h ep_;
@@ -156,6 +174,8 @@ private:
     bool data_ready_flag_;
     uint64_t expect_sn_;
     UcpAmList recv_q_;
+
+    mutable bthread::Mutex send_mutex_;
     UcpAmSendList send_q_;
     uint64_t next_send_sn_;
     butil::atomic<UcpAmMsg *> ready_list_;

@@ -248,6 +248,12 @@ again:
     }
 }
 
+static void MsgHeaderIn(MsgHeader *host, MsgHeader *net)
+{
+    host->cmd = le32toh(net->cmd);
+    host->sn = le64toh(net->sn);
+}
+
 ucs_status_t UcpWorker::AmCallback(void *arg,
      const void *header, size_t header_length, void *data, size_t length,
      const ucp_am_recv_param_t *param)
@@ -299,7 +305,7 @@ ucs_status_t UcpWorker::DoAmCallback(
         return UCS_OK;
     }
     msg->conn = conn;
-    msg->sn = le64toh(mh->sn);
+    MsgHeaderIn(&msg->header, mh);
     msg->data = data;
     msg->length = length;
     if (param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV) {
@@ -368,8 +374,12 @@ void UcpWorker::DispatchAmMsgQ()
                 msg->buf.append_user_data(msg->data, msg->length,
                     ReleaseWorkerData, this);
             } else {
-                msg->buf.append(msg->data, msg->length);
-                ucp_am_data_release(ucp_worker_, msg->data);
+                if (msg->data) {
+                    if (msg->length) {
+                        msg->buf.append(msg->data, msg->length);
+                    }
+                    ucp_am_data_release(ucp_worker_, msg->data);
+                }
             }
             msg->req = nullptr;
             goto request_done;
@@ -395,7 +405,7 @@ void UcpWorker::DispatchAmMsgQ()
 request_done:
         CHECK(!msg->has_flag(AMF_RECV_Q)) << "already on receive queue";
         TAILQ_FOREACH_REVERSE(elem, &conn->recv_q_, UcpAmList, link) {
-            if (msg->sn > elem->sn) {
+            if (msg->header.sn > elem->header.sn) {
                 TAILQ_INSERT_AFTER(&conn->recv_q_, elem, msg, link);
                 msg->set_flag(AMF_RECV_Q);
                 break;
@@ -504,7 +514,7 @@ bool UcpWorker::CheckConnRecvQ(const UcpConnectionRef& conn)
             UcpAmMsg::Release(msg);
             continue;
         }
-        if (msg->sn != conn->expect_sn_)
+        if (msg->header.sn != conn->expect_sn_)
             break;
         avail = true;
         CHECK(msg->has_flag(AMF_RECV_Q)) << "not on receive queue";
@@ -522,11 +532,23 @@ void UcpWorker::SaveInputMessage(const UcpConnectionRef &conn, UcpAmMsg *msg)
 {
     UcpAmMsg *ptr;
 
-    do {
-        ptr = conn->ready_list_.load(butil::memory_order_relaxed);
-        msg->link.tqe_next = ptr;
-    } while (!conn->ready_list_.compare_exchange_strong(ptr, msg,
-             std::memory_order_release));
+    switch(msg->header.cmd) {
+    case UCP_CMD_BRPC: 
+        do {
+            ptr = conn->ready_list_.load(butil::memory_order_relaxed);
+            msg->link.tqe_next = ptr;
+        } while (!conn->ready_list_.compare_exchange_strong(ptr, msg,
+                    std::memory_order_release));
+        break;
+    case UCP_CMD_PING:
+        HandlePing(conn, msg);
+        break;
+    case UCP_CMD_PONG:
+        HandlePong(conn, msg);
+        break;
+    default:
+        LOG(ERROR) << "From " << conn->remote_side_str_ << "i ,unknown command " << msg->header.cmd;
+    }
 }
 
 void UcpWorker::MergeInputMessage(UcpConnection *conn)
@@ -559,6 +581,24 @@ void UcpWorker::MergeInputMessage(UcpConnection *conn)
         }
         UcpAmMsg::Release(msg);
     }
+}
+
+void UcpWorker::HandlePing(const UcpConnectionRef &conn, UcpAmMsg *msg)
+{
+    mutex_.unlock();
+
+    butil::IOBuf buf(butil::IOBuf::Movable(msg->buf));
+    StartSend(UCP_CMD_PONG, conn.get(), &buf);
+    UcpAmMsg::Release(msg);
+
+    mutex_.lock();
+}
+
+void UcpWorker::HandlePong(const UcpConnectionRef &conn, UcpAmMsg *msg)
+{
+    mutex_.unlock();
+    conn->HandlePong(msg);
+    mutex_.lock();
 }
 
 int UcpWorker::Accept(UcpConnection *conn, ucp_conn_request_h req)
@@ -647,7 +687,7 @@ void UcpWorker::Release(UcpConnectionRef conn)
         return;
     } else if (UCS_PTR_IS_ERR(request)) {
         conn->ep_ = NULL;
-        LOG(ERROR) << "ucp_ep_close_nb(" << conn->remote_side_str_
+        DLOG(ERROR) << "ucp_ep_close_nb(" << conn->remote_side_str_
                    << ") failed with status ("
                    << ucs_status_string(UCS_PTR_STATUS(request)) << ")";
         return;
@@ -844,9 +884,17 @@ void UcpWorker::KeepSendRequest(void)
     }
 }
 
-ssize_t UcpWorker::StartSend(UcpConnection *conn,
+ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn, butil::IOBuf *buf)
+{
+    butil::IOBuf *data_list[1] = {buf};
+    return StartSend(cmd, conn, data_list, 1);
+}
+
+ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn,
     butil::IOBuf *data_list[], int ndata)
 {
+    BAIDU_SCOPED_LOCK(conn->send_mutex_);
+
     // Use batch submit to reduce atomic operations
     const int BATCH_SEND_SIZE = 6;
     UcpAmSendInfo *batch[BATCH_SEND_SIZE];
@@ -869,6 +917,8 @@ ssize_t UcpWorker::StartSend(UcpConnection *conn,
             break;
         }
         msg->conn = conn;
+        msg->header.cmd = htole32(cmd);
+        msg->header.pad = 0;
         msg->header.sn = htole64(conn->next_send_sn_);
         msg->buf.append(butil::IOBuf::Movable(*data_list[i]));
         msg->buf.fill_ucp_iov(&msg->iov, INT_MAX,

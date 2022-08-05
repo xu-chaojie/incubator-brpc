@@ -559,6 +559,7 @@ int Socket::ResetFileDescriptor(int fd) {
     // Skip following settings for ucp worker event fd, it was set
     // by ucx library.
     if (is_ucp_connection()) {
+        // Cache connection object for fast access
         _ucp_conn = get_or_create_ucp_cm()->GetConnection(fd);
         if (!_ucp_conn) {
             LOG(ERROR) << "Get not get ucp connection, fd = " << fd;
@@ -1331,6 +1332,19 @@ int Socket::Connect(const timespec* abstime,
         }
         
     } else {
+        if (is_ucp_connection()) {
+            UcpConnectionRef conn = get_or_create_ucp_cm()->GetConnection(sockfd);
+            if (conn) {
+                int rc = conn->Ping(abstime);
+                if (rc)
+                    return rc;
+                goto out;
+            } else {
+                errno = ENOTCONN;
+            }
+            return -1;
+        }
+
         if (WaitEpollOut(sockfd, false, abstime) != 0) {
             PLOG(WARNING) << "Fail to wait EPOLLOUT of fd=" << sockfd;
             return -1;
@@ -1339,6 +1353,7 @@ int Socket::Connect(const timespec* abstime,
             return -1;
         }
     }
+out:
     return sockfd.release();
 }
 

@@ -121,27 +121,23 @@ extern int bthread_rwlockattr_setkind_np(bthread_rwlockattr_t* attr, int pref);
 class wlock_guard {
 public:
     explicit wlock_guard(bthread_rwlock_t& mutex) : _pmutex(&mutex) {
-#if !defined(NDEBUG)
         const int rc = bthread_rwlock_wrlock(_pmutex);
         if (rc) {
             LOG(FATAL) << "Fail to lock bthread_rwlock_t=" << _pmutex << ", " << berror(rc);
             _pmutex = NULL;
         }
-#else
-        bthread_rwlock_wrlock(_pmutex);
-#endif // NDEBUG
     }
 
     ~wlock_guard() {
-#ifndef NDEBUG
-        if (_pmutex) {
-            bthread_rwlock_unlock(_pmutex);
-        }
-#else
-        bthread_rwlock_unlock(_pmutex);
-#endif
+        unlock();
     }
 
+    void unlock() {
+        if (_pmutex) {
+            bthread_rwlock_unlock(_pmutex);
+            _pmutex = NULL;
+        }
+    }
 private:
     DISALLOW_COPY_AND_ASSIGN(wlock_guard);
     bthread_rwlock_t* _pmutex;
@@ -150,25 +146,22 @@ private:
 class rlock_guard {
 public:
     explicit rlock_guard(bthread_rwlock_t& mutex) : _pmutex(&mutex) {
-#if !defined(NDEBUG)
         const int rc = bthread_rwlock_rdlock(_pmutex);
         if (rc) {
             LOG(FATAL) << "Fail to lock bthread_rwlock_t=" << _pmutex << ", " << berror(rc);
             _pmutex = NULL;
         }
-#else
-        bthread_rwlock_rdlock(_pmutex);
-#endif // NDEBUG
     }
 
     ~rlock_guard() {
-#ifndef NDEBUG
+        unlock();
+    }
+
+    void unlock() {
         if (_pmutex) {
             bthread_rwlock_unlock(_pmutex);
+            _pmutex = NULL;
         }
-#else
-        bthread_rwlock_unlock(_pmutex);
-#endif
     }
 
 private:

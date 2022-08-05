@@ -67,7 +67,8 @@ private:
     void InvokeExternalEvents();
     void CheckExitingEp();
     ssize_t StartRecv(UcpConnection *conn);
-    ssize_t StartSend(UcpConnection *conn, butil::IOBuf *buf[], int ndata);
+    ssize_t StartSend(int cmd, UcpConnection *conn, butil::IOBuf *buf);
+    ssize_t StartSend(int cmd, UcpConnection *conn, butil::IOBuf *buf[], int ndata);
     void DispatchDataReady();
     void SetDataReady(const UcpConnectionRef & conn);
     void SetDataReadyLocked(const UcpConnectionRef & conn);
@@ -96,7 +97,8 @@ private:
     void CancelRequests(const UcpConnectionRef &ref);
     void SaveInputMessage(const UcpConnectionRef &conn, UcpAmMsg *msg);
     void MergeInputMessage(UcpConnection *conn);
-
+    void HandlePing(const UcpConnectionRef &conn, UcpAmMsg *msg);
+    void HandlePong(const UcpConnectionRef &conn, UcpAmMsg *msg);
 private:
     bthread::Mutex mutex_;
     std::list<EventCallbackRef> external_events_;
