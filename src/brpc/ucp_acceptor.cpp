@@ -286,7 +286,7 @@ int UcpAcceptor::StartAccept(const butil::EndPoint &endpoint,
                            sizeof(ip_str));
     ucs_sockaddr_get_port((struct sockaddr *)&attr.sockaddr, &ip_port);
 
-    LOG(INFO) << "ucx server is listening on IP " << ip_str << " port " 
+    LOG(INFO) << "Ucp server is listening on IP " << ip_str << " port " 
               << ip_port;
     return 0;
 
