@@ -165,19 +165,23 @@ private:
     int socket_id_set_;
     int state_;
     butil::IOPortal in_buf_;
-
     // Cached remote address
     butil::EndPoint remote_side_;
     std::string remote_side_str_;
 
-    // Populated by UcpWorker
+    // Accessed by brpc sender thread
+    mutable bthread::Mutex send_mutex_;
+    uint64_t next_send_sn_;
+ 
+    char pad0[64];
+
+    // Accessed by UcpWorker
     bool data_ready_flag_;
     uint64_t expect_sn_;
     UcpAmList recv_q_;
-
-    mutable bthread::Mutex send_mutex_;
     UcpAmSendList send_q_;
-    uint64_t next_send_sn_;
+
+    char pad1[64];
     butil::atomic<UcpAmMsg *> ready_list_;
 
     friend class UcpCm;

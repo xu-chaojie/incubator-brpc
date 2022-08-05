@@ -135,6 +135,7 @@ private:
     std::atomic<void *>free_data_;
     int free_data_count_;
 
+    char pad[64];
     std::atomic<UcpAmSendInfo *>send_list_;
 
     friend class UcpConnection;
