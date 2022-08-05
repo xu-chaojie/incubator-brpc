@@ -32,7 +32,7 @@
 
 namespace brpc {
 
-DEFINE_int32(brpc_ucp_workers, 2, "Number of ucp workers");
+DEFINE_int32(brpc_ucp_workers, 1, "Number of ucp workers");
 
 static UcpCm *g_cm;
 static std::mutex g_cm_mutex;
