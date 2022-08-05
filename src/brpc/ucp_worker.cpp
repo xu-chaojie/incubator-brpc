@@ -31,7 +31,7 @@
 
 namespace brpc {
 
-DEFINE_int32(brpc_ucp_worker_delay, 100, "Number of microseconds");
+DEFINE_int32(brpc_ucp_worker_delay, -1, "Number of microseconds");
 DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
 
 UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
@@ -167,27 +167,25 @@ void UcpWorker::MaybeWakeup()
 
 void UcpWorker::DispatchExternalEvent(EventCallbackRef e)
 {
-    external_mutex_.lock();
+    mutex_.lock();
     external_events_.push_back(e);
-    external_mutex_.unlock();
+    mutex_.unlock();
     Wakeup();
 }
 
 void UcpWorker::InvokeExternalEvents()
 {
-    external_mutex_.lock();
+    // assert(mutex_.is_locked_by_me());
     while (!external_events_.empty()) {
-        {
-            auto e = external_events_.front();
-            external_events_.pop_front();
-            external_mutex_.unlock();
-            if (e)
-                e->do_request(0);
-            // e is destructed here
-        }
-        external_mutex_.lock();
+        auto e = external_events_.front();
+        external_events_.pop_front();
+        mutex_.unlock();
+        if (e)
+            e->do_request(0);
+        // e is destructed here
+        mutex_.lock();
     }
-    external_mutex_.unlock();
+    // assert(mutex_.is_locked_by_me());
 }
 
 bool UcpWorker::SetAmCallback()
@@ -223,18 +221,15 @@ void UcpWorker::DoRunWorker()
 {
     struct pollfd poll_info;
 
-    mutex_.lock();
     while (status_ != STOPPING) {
-        mutex_.unlock();
-
         if (FLAGS_brpc_ucp_worker_delay) {
             poll_info.fd = event_fd_;
             poll_info.events = POLLIN;
             poll(&poll_info, 1, FLAGS_brpc_ucp_worker_delay);
         }
 
-        mutex_.lock();
 again:
+        mutex_.lock();
         while (ucp_worker_progress(ucp_worker_))
             ;
         DispatchAmMsgQ();
@@ -243,16 +238,14 @@ again:
         DispatchDataReady();
         CheckExitingEp();
         RecycleWorkerData();
-        mutex_.unlock();
         InvokeExternalEvents();
-        mutex_.lock();
         ucs_status_t stat = ucp_worker_arm(ucp_worker_);
+        mutex_.unlock();
         if (stat == UCS_ERR_BUSY) /* some events are arrived already */
             goto again;
         CHECK(stat == UCS_OK) << "ucx_worker_arm failed ("
             << ucs_status_string(stat) << ")";
     }
-    mutex_.unlock();
 }
 
 ucs_status_t UcpWorker::AmCallback(void *arg,
@@ -324,9 +317,9 @@ void UcpWorker::ReleaseWorkerData(void *data, void *arg)
     void **ptr = (void **)data;
 
     do {
-        *ptr = w->free_data_.load(std::memory_order_relaxed);
+        *ptr = w->free_data_.load(butil::memory_order_relaxed);
     } while (!w->free_data_.compare_exchange_strong(*ptr, data,
-             std::memory_order_relaxed));
+             butil::memory_order_relaxed));
     if (++w->free_data_count_ > 100) {
         w->free_data_count_ = 0;
         w->MaybeWakeup();
@@ -335,7 +328,7 @@ void UcpWorker::ReleaseWorkerData(void *data, void *arg)
 
 void UcpWorker::RecycleWorkerData()
 {
-    if (!free_data_.load(std::memory_order_relaxed))
+    if (!free_data_.load(butil::memory_order_relaxed))
         return;
     free_data_count_ = 0;
     void *p = free_data_.exchange(NULL, std::memory_order_release);
@@ -363,7 +356,6 @@ void UcpWorker::DispatchAmMsgQ()
     TAILQ_INIT(&tmp_list);
     TAILQ_CONCAT(&tmp_list, &msg_q_, link);
     // msg_q_ is inited by TAILQ_CONCAT
-    mutex_.unlock();
 
     while (!TAILQ_EMPTY(&tmp_list)) {
         msg = TAILQ_FIRST(&tmp_list);
@@ -380,7 +372,6 @@ void UcpWorker::DispatchAmMsgQ()
                 ucp_am_data_release(ucp_worker_, msg->data);
             }
             msg->req = nullptr;
-            mutex_.lock();
             goto request_done;
         }
  
@@ -399,7 +390,6 @@ void UcpWorker::DispatchAmMsgQ()
                          ucp_dt_make_iov();
         param.cb.recv_am = AmRecvCallback;
         param.user_data = msg;
-        mutex_.lock();
         msg->req = ucp_am_recv_data_nbx(ucp_worker_,
                         msg->desc, buf, len, &param);
 request_done:
@@ -428,10 +418,7 @@ request_done:
             msg->set_flag(AMF_COMP_Q);
             LOG(INFO) << "Failed to call ucp_am_recv_nbx (" << ucs_status_string(st) << ")";
         }
-        mutex_.unlock();
     }
-
-    mutex_.lock();
 }
 
 void UcpWorker::AmRecvCallback(void *request, ucs_status_t status,
@@ -470,7 +457,6 @@ void UcpWorker::DispatchRecvCompQ()
     TAILQ_INIT(&tmp_list);
     TAILQ_CONCAT(&tmp_list, &recv_comp_q_, comp_link);
     // recv_comp_q_ is inited by TAILQ_CONCAT
-    mutex_.unlock();
 
     while (!TAILQ_EMPTY(&tmp_list)) {
         UcpAmMsg *msg = TAILQ_FIRST(&tmp_list);
@@ -500,11 +486,9 @@ void UcpWorker::DispatchRecvCompQ()
         }
 
         if (avail) {
-            SetDataReady(conn);
+            SetDataReadyLocked(conn);
         }
     }
-
-    mutex_.lock();
 }
 
 bool UcpWorker::CheckConnRecvQ(const UcpConnectionRef& conn)
@@ -539,7 +523,7 @@ void UcpWorker::SaveInputMessage(const UcpConnectionRef &conn, UcpAmMsg *msg)
     UcpAmMsg *ptr;
 
     do {
-        ptr = conn->ready_list_.load(std::memory_order_relaxed);
+        ptr = conn->ready_list_.load(butil::memory_order_relaxed);
         msg->link.tqe_next = ptr;
     } while (!conn->ready_list_.compare_exchange_strong(ptr, msg,
              std::memory_order_release));
@@ -592,7 +576,7 @@ int UcpWorker::Accept(UcpConnection *conn, ucp_conn_request_h req)
 
 int UcpWorker::Connect(UcpConnection *conn, const butil::EndPoint &peer)
 {
-    std::unique_lock<bthread::Mutex> lg(mutex_);
+    BAIDU_SCOPED_LOCK(mutex_);
     int ret = create_ucp_ep(ucp_worker_, peer, ErrorCallback, this, &conn->ep_);
     if (ret == 0) {
         auto it = conn_map_.find(conn->ep_);
@@ -725,6 +709,7 @@ ssize_t UcpWorker::StartRecv(UcpConnection *conn)
 
 void UcpWorker::DispatchDataReady()
 {
+    // assert(w->mutex_.is_locked());
     std::queue<UcpConnectionRef> tmp;
 
     if (data_ready_.empty()) {
@@ -743,7 +728,7 @@ void UcpWorker::DispatchDataReady()
 
 void UcpWorker::SetDataReady(const UcpConnectionRef& conn)
 {
-    std::unique_lock<bthread::Mutex> lg(mutex_);
+    BAIDU_SCOPED_LOCK(mutex_);
 
     SetDataReadyLocked(conn);
 }
@@ -759,6 +744,7 @@ void UcpWorker::SetDataReadyLocked(const UcpConnectionRef &conn)
 
 void UcpWorker::AmSendCb(void *request, ucs_status_t status, void *user_data)
 {
+    // assert(w->mutex_.is_locked());
     UcpAmSendInfo *msg = (UcpAmSendInfo *)user_data;
     UcpConnectionRef conn = msg->conn;
 
@@ -868,7 +854,7 @@ ssize_t UcpWorker::StartSend(UcpConnection *conn,
     size_t total = 0;
     int err = 0;
 
-    if (conn->ucp_code_.load()) {
+    if (conn->ucp_code_.load(butil::memory_order_relaxed)) {
         errno = ENOTCONN;
         return -1;
     }

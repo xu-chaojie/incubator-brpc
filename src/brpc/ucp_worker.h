@@ -99,7 +99,6 @@ private:
 
 private:
     bthread::Mutex mutex_;
-    bthread::Mutex external_mutex_;
     std::list<EventCallbackRef> external_events_;
     Status status_;
     // Worker id
