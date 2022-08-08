@@ -34,6 +34,38 @@ namespace brpc {
 DEFINE_int32(brpc_ucp_worker_delay, -1, "Number of microseconds");
 DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
 
+class UcpWorker::PingHandler : public EventCallback {
+public:
+    UcpConnectionRef conn;
+    UcpAmMsg *msg;
+    PingHandler(const UcpConnectionRef& c, UcpAmMsg *m)
+        : conn(c), msg(m) {}
+    virtual void do_request(int fd_or_id) {
+        butil::IOBuf buf(butil::IOBuf::Movable(msg->buf));
+        conn->worker_->StartSend(UCP_CMD_PONG, conn.get(), &buf);
+        UcpAmMsg::Release(msg);
+        msg = NULL;
+    }
+    virtual ~PingHandler() {
+        CHECK(msg == NULL) << "msg memory was not freed";
+    } 
+};
+
+class UcpWorker::PongHandler : public EventCallback {
+public:
+    UcpConnectionRef conn;
+    UcpAmMsg *msg;
+    PongHandler(const UcpConnectionRef& c, UcpAmMsg *m)
+        : conn(c), msg(m) {}
+    virtual void do_request(int fd_or_id) {
+        conn->HandlePong(msg);
+        msg = NULL;
+    }
+    virtual ~PongHandler() {
+        CHECK(msg == NULL) << "msg memory was not freed";
+    } 
+};
+
 UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
     : status_(UNINITIALIZED)
     , id_(id)
@@ -172,6 +204,12 @@ void UcpWorker::DispatchExternalEvent(EventCallbackRef e)
     mutex_.lock();
     external_events_.push_back(e);
     mutex_.unlock();
+    MaybeWakeup();
+}
+
+void UcpWorker::DispatchExternalEventLocked(EventCallbackRef e)
+{
+    external_events_.push_back(e);
     MaybeWakeup();
 }
 
@@ -588,20 +626,12 @@ void UcpWorker::MergeInputMessage(UcpConnection *conn)
 
 void UcpWorker::HandlePing(const UcpConnectionRef &conn, UcpAmMsg *msg)
 {
-    mutex_.unlock();
-
-    butil::IOBuf buf(butil::IOBuf::Movable(msg->buf));
-    StartSend(UCP_CMD_PONG, conn.get(), &buf);
-    UcpAmMsg::Release(msg);
-
-    mutex_.lock();
+    DispatchExternalEventLocked(new PingHandler(conn, msg));
 }
 
 void UcpWorker::HandlePong(const UcpConnectionRef &conn, UcpAmMsg *msg)
 {
-    mutex_.unlock();
-    conn->HandlePong(msg);
-    mutex_.lock();
+    DispatchExternalEventLocked(new PongHandler(conn, msg));
 }
 
 int UcpWorker::Accept(UcpConnection *conn, ucp_conn_request_h req)
@@ -673,6 +703,8 @@ void UcpWorker::Release(UcpConnectionRef conn)
 
     // Lock the worker
     BAIDU_SCOPED_LOCK(mutex_);
+
+    conn->state_ = UcpConnection::STATE_CLOSED;
 
     auto it = conn_map_.find(ep);
     if (it != conn_map_.end()) {

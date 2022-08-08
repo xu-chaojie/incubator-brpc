@@ -54,6 +54,9 @@ public:
 private:
     DISALLOW_COPY_AND_ASSIGN(UcpWorker);
 
+    class PingHandler;
+    class PongHandler;
+
     int Initialize();
     int Accept(UcpConnection *conn, ucp_conn_request_h req);
     int Connect(UcpConnection *conn,  const butil::EndPoint &peer);
@@ -99,6 +102,7 @@ private:
     void MergeInputMessage(UcpConnection *conn);
     void HandlePing(const UcpConnectionRef &conn, UcpAmMsg *msg);
     void HandlePong(const UcpConnectionRef &conn, UcpAmMsg *msg);
+    void DispatchExternalEventLocked(EventCallbackRef e);
 private:
     bthread::Mutex mutex_;
     std::list<EventCallbackRef> external_events_;

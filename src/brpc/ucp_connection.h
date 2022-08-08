@@ -21,13 +21,12 @@
 #include "butil/intrusive_ptr.hpp"
 #include "butil/atomicops.h"
 #include "butil/iobuf.h"
+#include "butil/refcountedobj.h"
 #include "butil/resource_pool.h"
 #include "bthread/mutex.h"
 #include "bthread/rwlock_v2.h"
 #include "bthread/condition_variable.h"
-#include "brpc/RefCountedObj.h"
 #include "brpc/socket_id.h"
-#include "brpc/eventcallback.h"
 #include <ucp/api/ucp.h>
 #include <sys/queue.h>
 #include <assert.h>
@@ -120,7 +119,7 @@ private:
     friend class butil::ResourcePool<UcpAmSendInfo>;
 };
 
-class UcpConnection : public RefCountedObject {
+class UcpConnection : public butil::RefCountedObject {
 public:
     UcpConnection(UcpCm* cm, UcpWorker *w);
     virtual ~UcpConnection();
@@ -133,6 +132,9 @@ public:
     ssize_t Write(butil::IOBuf *buf); 
     ssize_t Write(butil::IOBuf *data_list[], int ndata);
     int Ping(const timespec* abstime);
+
+    void *operator new(size_t);
+    void operator delete(void *);
 
 private:
     void Close();
@@ -152,10 +154,6 @@ private:
 
     mutable bthread::v2::bthread_rwlock_t mutex_;
 
-    bthread::Mutex ping_mutex_;
-    bthread::ConditionVariable ping_cond_;
-    int ping_seq_;
-
     UcpCm *cm_;
     UcpWorker *worker_;
     ucp_ep_h ep_;
@@ -169,20 +167,22 @@ private:
     butil::EndPoint remote_side_;
     std::string remote_side_str_;
 
+    bthread::Mutex ping_mutex_;
+    bthread::ConditionVariable ping_cond_;
+    int ping_seq_;
+
     // Accessed by brpc sender thread
     mutable bthread::Mutex send_mutex_;
     uint64_t next_send_sn_;
  
-    char pad0[64];
-
     // Accessed by UcpWorker
-    bool data_ready_flag_;
+    bool data_ready_flag_ BAIDU_CACHELINE_ALIGNMENT;
     uint64_t expect_sn_;
     UcpAmList recv_q_;
     UcpAmSendList send_q_;
 
-    char pad1[64];
-    butil::atomic<UcpAmMsg *> ready_list_;
+    // Accessed both by brpc receiver thread UcpWorker
+    butil::atomic<UcpAmMsg *> ready_list_ BAIDU_CACHELINE_ALIGNMENT;
 
     friend class UcpCm;
     friend class UcpWorker;

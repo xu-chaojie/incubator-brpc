@@ -25,6 +25,8 @@
 #include <sys/socket.h>
 #include <ucs/datastruct/list.h>
 
+#include <malloc.h>
+
 namespace brpc {
 
 DEFINE_int32(brpc_ucp_ping_timeout, 10, "Number of seconds");
@@ -128,6 +130,16 @@ UcpConnection::~UcpConnection()
     g_ucp_conn << -1;
 }
 
+void *UcpConnection::operator new(size_t size)
+{
+    return memalign(64, size);
+}
+
+void UcpConnection::operator delete(void *ptr)
+{
+    free(ptr);
+}
+
 int UcpConnection::Accept(ucp_conn_request_h req)
 {
     bthread::v2::wlock_guard g(mutex_);
@@ -157,11 +169,8 @@ void UcpConnection::Close()
     if (state_ != STATE_OPEN) {
         return;
     }
-    state_ = STATE_CLOSED;
-
-    WakePing();
-
     worker_->Release(this);
+    WakePing();
 }
 
 SocketId UcpConnection::GetSocketId() const

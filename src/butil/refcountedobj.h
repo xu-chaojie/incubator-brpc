@@ -6,7 +6,7 @@
 
 #include <assert.h>
 
-namespace brpc {
+namespace butil {
 
 struct RefCountedObject {
 private:
@@ -20,13 +20,7 @@ public:
 
     RefCountedObject *get()
     {
-        int v = nref_.fetch_add(1, std::memory_order_relaxed);
-#if 0
-        //DLOG(INFO) << "RefCountedObject::get " << this << " "
-        //           << v << " -> " << v+1;
-#else
-        v = v;
-#endif
+        nref_.fetch_add(1, std::memory_order_relaxed);
         return this;
     }
 
@@ -35,12 +29,6 @@ public:
         int v = nref_.fetch_sub(1, std::memory_order_relaxed);
         if ((v - 1) == 0)
             delete this;
-#if 0
-        DLOG(INFO) << "RefCountedObject::put " << this
-                   << " " << v << " -> " << v-1;
-#else
-        v = v;
-#endif
     }
 
     int get_nref() {
@@ -51,6 +39,6 @@ public:
 void intrusive_ptr_add_ref(RefCountedObject *p);
 void intrusive_ptr_release(RefCountedObject *p);
 
-} //namepace brpc
+} //namepace butil
 
 #endif

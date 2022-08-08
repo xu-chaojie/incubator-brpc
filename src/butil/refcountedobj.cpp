@@ -1,6 +1,6 @@
-#include "RefCountedObj.h"                                                 
+#include "refcountedobj.h"
                                                                                 
-namespace brpc {
+namespace butil {
 
 void intrusive_ptr_add_ref(RefCountedObject *p)
 {
@@ -11,4 +11,4 @@ void intrusive_ptr_release(RefCountedObject *p)
 {
     p->put();
 }
-} // namespace brpc
+} // namespace butil
