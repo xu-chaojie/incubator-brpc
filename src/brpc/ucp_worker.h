@@ -51,6 +51,9 @@ public:
     void DispatchExternalEvent(EventCallbackRef e);
     pthread_t Owner() const { return worker_tid_; }
 
+    void * operator new(size_t);
+    void operator delete(void *);
+
 private:
     DISALLOW_COPY_AND_ASSIGN(UcpWorker);
 
@@ -136,11 +139,13 @@ private:
     UcpAmList msg_q_;
     UcpAmList recv_comp_q_;
 
-    std::atomic<void *>free_data_;
+    std::atomic<void *>free_data_ BAIDU_CACHELINE_ALIGNMENT;
     int free_data_count_;
 
-    char pad[64];
-    std::atomic<UcpAmSendInfo *>send_list_;
+    union {
+        std::atomic<UcpAmSendInfo *>send_list_;
+        char cacheline__[64];
+    } BAIDU_CACHELINE_ALIGNMENT;
 
     friend class UcpConnection;
 };

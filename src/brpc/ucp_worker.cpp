@@ -26,6 +26,7 @@
 #include <endian.h>
 #include <limits.h>
 #include <poll.h>
+#include <stdlib.h>
 
 #define AM_ID  0
 
@@ -86,6 +87,16 @@ UcpWorker::~UcpWorker()
 {
     Stop();
     Join();
+}
+
+void *UcpWorker::operator new(size_t size)
+{
+    return aligned_alloc(64, size);
+}
+
+void UcpWorker::operator delete(void *ptr)
+{
+    free(ptr);
 }
 
 int UcpWorker::Initialize()

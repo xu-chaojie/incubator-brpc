@@ -181,8 +181,11 @@ private:
     UcpAmList recv_q_;
     UcpAmSendList send_q_;
 
-    // Accessed both by brpc receiver thread UcpWorker
-    butil::atomic<UcpAmMsg *> ready_list_ BAIDU_CACHELINE_ALIGNMENT;
+    union {
+        // Accessed both by brpc receiver thread UcpWorker
+        butil::atomic<UcpAmMsg *> ready_list_;
+        char cacheline__[64];
+    } BAIDU_CACHELINE_ALIGNMENT;
 
     friend class UcpCm;
     friend class UcpWorker;

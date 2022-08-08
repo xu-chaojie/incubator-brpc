@@ -20,12 +20,12 @@
 #include "brpc/socket.h"
 #include "bvar/bvar.h"
 
+#include <stdlib.h>
 #include <string.h>
 #include <gflags/gflags.h>
 #include <sys/socket.h>
 #include <ucs/datastruct/list.h>
 
-#include <malloc.h>
 
 namespace brpc {
 
@@ -132,7 +132,7 @@ UcpConnection::~UcpConnection()
 
 void *UcpConnection::operator new(size_t size)
 {
-    return memalign(64, size);
+    return aligned_alloc(64, size);
 }
 
 void UcpConnection::operator delete(void *ptr)
