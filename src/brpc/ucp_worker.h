@@ -49,7 +49,7 @@ public:
     void Wakeup();
     void MaybeWakeup();
     void DispatchExternalEvent(EventCallbackRef e);
-    bthread_t Owner() const { return worker_tid_; }
+    pthread_t Owner() const { return worker_tid_; }
 
 private:
     DISALLOW_COPY_AND_ASSIGN(UcpWorker);
