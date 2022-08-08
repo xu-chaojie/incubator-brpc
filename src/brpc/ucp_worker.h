@@ -144,7 +144,7 @@ private:
 
     union {
         std::atomic<UcpAmSendInfo *>send_list_;
-        char cacheline__[64];
+        char cacheline__[BAIDU_CACHELINE_SIZE];
     } BAIDU_CACHELINE_ALIGNMENT;
 
     friend class UcpConnection;

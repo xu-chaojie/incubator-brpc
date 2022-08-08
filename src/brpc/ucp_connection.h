@@ -17,6 +17,7 @@
 #ifndef BRPC_UCP_CONNECTION_H
 #define BRPC_UCP_CONNECTION_H
 
+#include "butil/macros.h"
 #include "butil/endpoint.h"
 #include "butil/intrusive_ptr.hpp"
 #include "butil/atomicops.h"
@@ -184,7 +185,7 @@ private:
     union {
         // Accessed both by brpc receiver thread UcpWorker
         butil::atomic<UcpAmMsg *> ready_list_;
-        char cacheline__[64];
+        char cacheline__[BAIDU_CACHELINE_SIZE];
     } BAIDU_CACHELINE_ALIGNMENT;
 
     friend class UcpCm;

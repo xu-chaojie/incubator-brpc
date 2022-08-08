@@ -132,7 +132,7 @@ UcpConnection::~UcpConnection()
 
 void *UcpConnection::operator new(size_t size)
 {
-    return aligned_alloc(64, size);
+    return aligned_alloc(BAIDU_CACHELINE_SIZE, size);
 }
 
 void UcpConnection::operator delete(void *ptr)

@@ -91,7 +91,7 @@ UcpWorker::~UcpWorker()
 
 void *UcpWorker::operator new(size_t size)
 {
-    return aligned_alloc(64, size);
+    return aligned_alloc(BAIDU_CACHELINE_SIZE, size);
 }
 
 void UcpWorker::operator delete(void *ptr)
