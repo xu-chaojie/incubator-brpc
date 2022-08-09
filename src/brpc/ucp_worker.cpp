@@ -32,7 +32,7 @@
 
 namespace brpc {
 
-DEFINE_int32(brpc_ucp_worker_delay, -1, "Number of microseconds");
+DEFINE_int32(brpc_ucp_worker_busy_poll, -1, "Worker busy poll");
 DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
 
 class UcpWorker::PingHandler : public EventCallback {
@@ -204,7 +204,7 @@ void UcpWorker::Wakeup()
 
 void UcpWorker::MaybeWakeup()
 {
-    if (FLAGS_brpc_ucp_worker_delay == 0)
+    if (FLAGS_brpc_ucp_worker_busy_poll)
         return;
     if (pthread_self() != worker_tid_)
         Wakeup();
@@ -273,10 +273,10 @@ void UcpWorker::DoRunWorker()
     struct pollfd poll_info;
 
     while (status_ != STOPPING) {
-        if (FLAGS_brpc_ucp_worker_delay) {
+        if (!FLAGS_brpc_ucp_worker_busy_poll) {
             poll_info.fd = event_fd_;
             poll_info.events = POLLIN;
-            poll(&poll_info, 1, FLAGS_brpc_ucp_worker_delay);
+            poll(&poll_info, 1, 1000);
         }
 
 again:
@@ -290,7 +290,7 @@ again:
         CheckExitingEp();
         RecycleWorkerData();
         InvokeExternalEvents();
-        ucs_status_t stat = FLAGS_brpc_ucp_worker_delay ?
+        ucs_status_t stat = !FLAGS_brpc_ucp_worker_busy_poll ?
             ucp_worker_arm(ucp_worker_) : UCS_OK;
         mutex_.unlock();
         if (stat == UCS_ERR_BUSY) /* some events are arrived already */
