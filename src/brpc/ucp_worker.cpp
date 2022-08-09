@@ -15,6 +15,7 @@
 // Authors: Xu Yifeng
 
 #include "butil/logging.h"
+#include "butil/pctrie.h"
 #include "bthread/unstable.h"
 #include "ucs/sys/sock.h"
 
@@ -34,6 +35,16 @@ namespace brpc {
 
 DEFINE_int32(brpc_ucp_worker_busy_poll, -1, "Worker busy poll");
 DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
+
+static void *alloc_trie_node(struct butil::pctrie *ptree)
+{
+    return malloc(butil::pctrie_node_size());
+}
+
+static void free_trie_node(struct butil::pctrie *ptree, void *node)
+{
+    free(node);
+}
 
 class UcpWorker::PingHandler : public EventCallback {
 public:
@@ -81,6 +92,12 @@ UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
     TAILQ_INIT(&recv_comp_q_);
     // This can not be changed dynamically
     out_of_order_ = FLAGS_brpc_ucp_deliver_out_of_order;
+
+    // Because UCX ep does not allow us to set private data,
+    // so we have to map ep to connection object, here we use
+    // pctrie to perform lookup, it should be faster than
+    // STL map which may be a red-black tree.
+    butil::pctrie_init(&conn_map_);
 }
 
 UcpWorker::~UcpWorker()
@@ -97,6 +114,36 @@ void *UcpWorker::operator new(size_t size)
 void UcpWorker::operator delete(void *ptr)
 {
     free(ptr);
+}
+
+void UcpWorker::AddConnection(UcpConnection *conn)
+{
+    if (!butil::pctrie_lookup(&conn_map_, (uintptr_t)conn->ep_)) {
+        butil::pctrie_insert(&conn_map_, (uintptr_t *)&conn->ep_,
+            alloc_trie_node);
+        conn->get(); // increase reference count
+    }
+}
+
+void UcpWorker::RemoveConnection(const ucp_ep_h ep)
+{
+    auto p = butil::pctrie_lookup(&conn_map_, (uintptr_t)ep);
+    if (p != NULL) {
+        UcpConnection *conn = ucs_container_of(p, UcpConnection, ep_);
+        CHECK(ep == conn->ep_) << "inconsistent member field ep_";
+        butil::pctrie_remove(&conn_map_, (uintptr_t)ep, free_trie_node);
+        conn->put(); // decrease reference count
+    }
+}
+
+UcpConnectionRef UcpWorker::FindConnection(const ucp_ep_h ep)
+{
+    auto p = butil::pctrie_lookup(&conn_map_, (uintptr_t)ep);
+    if (p != NULL) {
+        UcpConnection *conn = ucs_container_of(p, UcpConnection, ep_);
+        return UcpConnectionRef(conn);
+    }
+    return UcpConnectionRef();
 }
 
 int UcpWorker::Initialize()
@@ -338,13 +385,12 @@ ucs_status_t UcpWorker::DoAmCallback(
         return UCS_OK;
     }
 
-    auto it = conn_map_.find(param->reply_ep);
-    if (it == conn_map_.end()) {
+    UcpConnectionRef conn = FindConnection(param->reply_ep);
+    if (!conn) {
         LOG(ERROR) << "Can not find ep in conn_map_";
         return UCS_OK;
     }
 
-    UcpConnectionRef& conn = it->second;
     if (conn->state_ == UcpConnection::STATE_CLOSED) {
         LOG(ERROR) << "Received am from" << conn->remote_side_str_
                    << " ,but connection was already closed";
@@ -650,9 +696,8 @@ int UcpWorker::Accept(UcpConnection *conn, ucp_conn_request_h req)
     BAIDU_SCOPED_LOCK(mutex_);
     int ret = CreateUcpEp(conn, req);
     if (ret == 0) {
-        auto it = conn_map_.find(conn->ep_);
-        CHECK(it == conn_map_.end()) << "repeated ep ?";
-        conn_map_[conn->ep_] = conn;
+        AddConnection(conn);
+        //CHECK(it == conn_map_.end()) << "repeated ep ?";
         MaybeWakeup();
     }
     return ret;
@@ -663,9 +708,12 @@ int UcpWorker::Connect(UcpConnection *conn, const butil::EndPoint &peer)
     BAIDU_SCOPED_LOCK(mutex_);
     int ret = create_ucp_ep(ucp_worker_, peer, ErrorCallback, this, &conn->ep_);
     if (ret == 0) {
+        AddConnection(conn);
+#if 0
         auto it = conn_map_.find(conn->ep_);
         CHECK(it == conn_map_.end()) << "repeated ep ?";
         conn_map_[conn->ep_] = conn;
+#endif
         conn->remote_side_ = peer;
         auto str = butil::endpoint2str(peer);
         conn->remote_side_str_ = str.c_str();
@@ -678,12 +726,11 @@ void UcpWorker::ErrorCallback(void *arg, ucp_ep_h ep, ucs_status_t status)
 {
     UcpWorker *w = static_cast<UcpWorker *>(arg);
     // assert(w->mutex_.is_locked());
-    auto it = w->conn_map_.find(ep);
-    if (it == w->conn_map_.end()) {
+    UcpConnectionRef conn = w->FindConnection(ep);
+    if (!conn) {
         LOG(ERROR) << "Can not find ep in ErrorCallback, may be moved";
         return;
     }
-    UcpConnectionRef conn = it->second;
     butil::EndPointStr str = endpoint2str(conn->remote_side_);
     LOG(ERROR) << "Error occurred on remote side " << str.c_str()
                << " (" << ucs_status_string(status) << ")";
@@ -717,11 +764,7 @@ void UcpWorker::Release(UcpConnectionRef conn)
 
     conn->state_ = UcpConnection::STATE_CLOSED;
 
-    auto it = conn_map_.find(ep);
-    if (it != conn_map_.end()) {
-        CHECK(conn == it->second);
-        conn_map_.erase(it);
-    }
+    RemoveConnection(conn->ep_);
 
     CancelRequests(conn);
 

@@ -19,6 +19,7 @@
 
 #include "butil/macros.h"
 #include "butil/endpoint.h"
+#include "butil/_pctrie.h"
 #include "bthread/bthread.h"
 #include "brpc/eventcallback.h"
 #include "brpc/ucp_connection.h"
@@ -106,13 +107,18 @@ private:
     void HandlePing(const UcpConnectionRef &conn, UcpAmMsg *msg);
     void HandlePong(const UcpConnectionRef &conn, UcpAmMsg *msg);
     void DispatchExternalEventLocked(EventCallbackRef e);
+
+    void AddConnection(UcpConnection *conn);
+    void RemoveConnection(const ucp_ep_h ep);
+    UcpConnectionRef FindConnection(const ucp_ep_h ep);
+
 private:
     bthread::Mutex mutex_;
     std::list<EventCallbackRef> external_events_;
     Status status_;
     // Worker id
     int id_;
-    std::map<ucp_ep_h, UcpConnectionRef> conn_map_;
+    butil::pctrie conn_map_;
     struct ExitingEp {
         int magic;
         ucp_ep_h ep;
