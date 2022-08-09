@@ -236,6 +236,19 @@ int UcpAcceptor::StartAccept(const butil::EndPoint &endpoint,
 
     CHECK(endpoint.is_ucp()) << "not ucp port";
 
+    BAIDU_SCOPED_LOCK(map_mutex_);
+    if (status_ == UNINITIALIZED) {
+        if (Initialize() != 0) {
+            LOG(FATAL) << "Fail to initialize UcpAcceptor";
+            return -1;
+        }
+        status_ = READY;
+    }
+    if (status_ != READY) {
+        LOG(FATAL) << "UcpAcceptor hasn't stopped yet: status=" << status();
+        return -1;
+    }
+
     // Create ucp worker
     if (create_ucp_worker(&worker, &efd, 0))
         return -1;
@@ -278,56 +291,17 @@ int UcpAcceptor::StartAccept(const butil::EndPoint &endpoint,
         goto err_listen;
     }
 
-    if (StartUcpMon(worker, listener, efd, idle_timeout_sec)) {
-        goto err_listen;
-    }
-
-    ucs_sockaddr_get_ipstr((struct sockaddr *)&attr.sockaddr, ip_str,
-                           sizeof(ip_str));
-    ucs_sockaddr_get_port((struct sockaddr *)&attr.sockaddr, &ip_port);
-
-    LOG(INFO) << "Ucp server is listening on IP " << ip_str << " port " 
-              << ip_port;
-    return 0;
-
-err_listen:
-    ucp_listener_destroy(listener);
-err_worker:
-    ucp_worker_destroy(worker);
-    return -1;
-}
-
-int UcpAcceptor::StartUcpMon(ucp_worker_h worker, ucp_listener_h listener, int event_fd,
-    int idle_timeout_sec)
-{
-    if (event_fd < 0) {
-        LOG(FATAL) << "Invalid ucx event_fd=" << event_fd;
-        return -1;
-    }
-    
-    BAIDU_SCOPED_LOCK(map_mutex_);
-    if (status_ == UNINITIALIZED) {
-        if (Initialize() != 0) {
-            LOG(FATAL) << "Fail to initialize UcpAcceptor";
-            return -1;
-        }
-        status_ = READY;
-    }
-    if (status_ != READY) {
-        LOG(FATAL) << "UcpAcceptor hasn't stopped yet: status=" << status();
-        return -1;
-    }
     if (idle_timeout_sec > 0) {
         if (bthread_start_background(&close_idle_tid_, NULL,
                                      CloseIdleConnections, this) != 0) {
             LOG(FATAL) << "Fail to start bthread";
-            return -1;
+            goto err_listen;
         }
     }
     idle_timeout_sec_ = idle_timeout_sec;
     ucp_worker_ = worker;
     ucp_listener_ = listener; 
-    event_fd_ = event_fd;
+    event_fd_ = efd;
     if (bthread_start_background(&acceptor_tid_, NULL,
                                  AcceptConnections, this) != 0) {
         bthread_stop(close_idle_tid_);
@@ -337,11 +311,25 @@ int UcpAcceptor::StartUcpMon(ucp_worker_h worker, ucp_listener_h listener, int e
         ucp_worker_ = NULL;
         ucp_listener_ = NULL;
         event_fd_ = -1;
-        return -1;
+        goto err_listen;
     }
 
+    ucs_sockaddr_get_ipstr((struct sockaddr *)&attr.sockaddr, ip_str,
+                           sizeof(ip_str));
+    ucs_sockaddr_get_port((struct sockaddr *)&attr.sockaddr, &ip_port);
+
+    LOG(INFO) << "Ucp server is listening on IP " << ip_str << " port " 
+              << ip_port;
+
     status_ = RUNNING;
+
     return 0;
+
+err_listen:
+    ucp_listener_destroy(listener);
+err_worker:
+    ucp_worker_destroy(worker);
+    return -1;
 }
 
 void* UcpAcceptor::AcceptConnections(void *arg)

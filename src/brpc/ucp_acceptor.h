@@ -93,9 +93,6 @@ private:
     void AcceptorLoop();
     void FinishDeferredAccept();
     void DoAccept(ucp_conn_request_h conn_request);
-    // Start ucp acceptor monitor
-    int StartUcpMon(ucp_worker_h worker, ucp_listener_h,
-                    int event_fd, int idle_timeout_sec);
 
     bthread_keytable_pool_t* keytable_pool_; // owned by Server
     Status status_;
