@@ -38,7 +38,10 @@ DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
 
 static void *alloc_trie_node(struct butil::pctrie *ptree)
 {
-    return malloc(butil::pctrie_node_size());
+    void *node = malloc(butil::pctrie_node_size());
+    if (node)
+        butil::pctrie_zone_init(node, butil::pctrie_node_size(), 0);
+    return node;
 }
 
 static void free_trie_node(struct butil::pctrie *ptree, void *node)
