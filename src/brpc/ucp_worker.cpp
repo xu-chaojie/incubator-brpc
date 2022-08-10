@@ -700,7 +700,6 @@ int UcpWorker::Accept(UcpConnection *conn, ucp_conn_request_h req)
     int ret = CreateUcpEp(conn, req);
     if (ret == 0) {
         AddConnection(conn);
-        //CHECK(it == conn_map_.end()) << "repeated ep ?";
         MaybeWakeup();
     }
     return ret;
@@ -712,11 +711,6 @@ int UcpWorker::Connect(UcpConnection *conn, const butil::EndPoint &peer)
     int ret = create_ucp_ep(ucp_worker_, peer, ErrorCallback, this, &conn->ep_);
     if (ret == 0) {
         AddConnection(conn);
-#if 0
-        auto it = conn_map_.find(conn->ep_);
-        CHECK(it == conn_map_.end()) << "repeated ep ?";
-        conn_map_[conn->ep_] = conn;
-#endif
         conn->remote_side_ = peer;
         auto str = butil::endpoint2str(peer);
         conn->remote_side_str_ = str.c_str();
