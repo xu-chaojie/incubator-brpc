@@ -180,7 +180,7 @@ int UcpWorker::Start()
     event_fd_ = efd;
     ucp_worker_ = w;
 
-    // Need to prepare ucp_worker before register with brpc fd_wait
+    // Need to arm ucp_worker before being polled
     stat = ucp_worker_arm(w);
     if (stat != UCS_OK) {
         LOG(ERROR) << "ucx_worker_arm failed ("
