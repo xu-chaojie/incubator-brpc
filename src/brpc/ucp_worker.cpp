@@ -33,7 +33,7 @@
 
 namespace brpc {
 
-DEFINE_int32(brpc_ucp_worker_busy_poll, 1, "Worker busy poll");
+DEFINE_bool(brpc_ucp_worker_busy_poll, true, "Worker busy poll");
 DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
 
 static void *alloc_trie_node(struct butil::pctrie *ptree)
