@@ -438,7 +438,7 @@ void UcpWorker::RecycleWorkerData()
     if (!free_data_.load(butil::memory_order_relaxed))
         return;
     free_data_count_ = 0;
-    void *p = free_data_.exchange(NULL, std::memory_order_release);
+    void *p = free_data_.exchange(NULL, butil::memory_order_release);
     while (p) {
         void *next = *(void **)p;
         ucp_am_data_release(ucp_worker_, p);
@@ -639,7 +639,7 @@ void UcpWorker::SaveInputMessage(const UcpConnectionRef &conn, UcpAmMsg *msg)
             ptr = conn->ready_list_.load(butil::memory_order_relaxed);
             msg->link.tqe_next = ptr;
         } while (!conn->ready_list_.compare_exchange_strong(ptr, msg,
-                    std::memory_order_release));
+                    butil::memory_order_release));
         break;
     case UCP_CMD_PING:
         HandlePing(conn, msg);
@@ -657,10 +657,10 @@ void UcpWorker::MergeInputMessage(UcpConnection *conn)
     UcpAmMsg *msg = NULL, *prev = NULL, *next = NULL;
 
     // assert(mutex_.is_locked_by_me());
-    if (!conn->ready_list_.load(std::memory_order_relaxed))
+    if (!conn->ready_list_.load(butil::memory_order_relaxed))
         return;
 
-    msg = conn->ready_list_.exchange(NULL, std::memory_order_acquire);
+    msg = conn->ready_list_.exchange(NULL, butil::memory_order_acquire);
     // Reverse the list to dispatch it in order
     prev = NULL;
     while (msg) {
@@ -915,10 +915,10 @@ void UcpWorker::SendRequest(UcpAmSendInfo *msgs[], int size)
     do {
         // here we don't read other thread's data, so we use
         // relaxed memory order
-        ptr = send_list_.load(std::memory_order_relaxed);
+        ptr = send_list_.load(butil::memory_order_relaxed);
         tail->link.tqe_next = ptr;
     } while (!send_list_.compare_exchange_strong(ptr, head,
-             std::memory_order_release));
+             butil::memory_order_release));
 }
 
 void UcpWorker::KeepSendRequest(void)
@@ -929,9 +929,9 @@ void UcpWorker::KeepSendRequest(void)
     size_t len = 0;
 
     // assert(mutex_.is_locked_by_me());
-    if (!send_list_.load(std::memory_order_relaxed))
+    if (!send_list_.load(butil::memory_order_relaxed))
         return;
-    msg = send_list_.exchange(NULL, std::memory_order_acquire);
+    msg = send_list_.exchange(NULL, butil::memory_order_acquire);
 
     // Reverse the list to dispatch it in order
     prev = NULL;
