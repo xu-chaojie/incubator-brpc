@@ -11,9 +11,9 @@ Active message、Tag 和Stream，我们的实现使用Active Message，并允许
 乱序消息投递，以提高性能。这些实现对于上层API都是透明的。
 
 
-
 概念
 ===
+
 BRPC中的通讯主要集中在以下几个基本概念：
 
 1. EndPoint
@@ -64,7 +64,7 @@ BRPC中的通讯主要集中在以下几个基本概念：
   当BRPC的client与server连接时，需要一个Channel对象，而通常初始化这个对象又涉及不少参数，于是BRPC用了ChannelOptions来封装这些参数。我们对UCP RDMA网络通讯的支持就是通过修改ChannelOptions, 增加字段use_ucp，当这个字段被设置为true时，BRPC socket层将使用UCP连接大致的ChannelOptions如下所示：
 
 
-  ```
+```
   struct ChannelOptions {
     // Constructed with default options.
     ChannelOptions();
@@ -137,6 +137,7 @@ Options中的use_tcp保持一致。
 4. ServerOptions
 
 BRCP的服务器使用了Server类，这个类我们没有改动，而是对brpc::ServerOptions options增加了字段以支持UCP的RDMA连接。
+
 
 ```
 struct ServerOptions {                                                          
@@ -215,6 +216,7 @@ public:
 ==========
 
 1. 修改
+
 我们对BRPC的multi_thread_echo_c++这个例子进行修改，使得它支持UCP RDMA网络。
 <a>https://github.com/opencurve/incubator-brpc/tree/ucx_am/example/multi_threaded_echo_c++</a>
 
@@ -303,5 +305,6 @@ I0811 11:30:52.776510 963950 /home/incubator-brpc/example/multi_threaded_echo_c+
 
 总结
 ===
+
 从上面的例子可以看出，使用RDMA并不复杂，我们通过简要增加一些字段完成了对RDMA接口的支持，具有
 良好的API兼容性，也获得了RDMA出色的性能。
