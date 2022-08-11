@@ -15,7 +15,7 @@
 // Author: Ge,Jun (gejun@baidu.com)
 // Date: Mon. Nov 7 14:47:36 CST 2011
 
-// Wrappers of IP and port.
+// Wrappers of TCP and port.
 
 #ifndef BUTIL_ENDPOINT_H
 #define BUTIL_ENDPOINT_H
@@ -28,7 +28,7 @@
 namespace butil {
 const size_t UNIX_SOCKET_FILE_PATH_SIZE = 108;
 
-// Type of an IP address
+// Type of an TCP address
 typedef struct in_addr ip_t;
 
 static const ip_t IP_ANY = { INADDR_ANY };
@@ -37,7 +37,7 @@ static const ip_t IP_NONE = { INADDR_NONE };
 // Convert |ip| to an integral
 inline in_addr_t ip2int(ip_t ip) { return ip.s_addr; }
 
-// Convert integral |ip_value| to an IP
+// Convert integral |ip_value| to an TCP
 inline ip_t int2ip(in_addr_t ip_value) {
     const ip_t ip = { ip_value };
     return ip;
@@ -53,7 +53,7 @@ struct IPStr {
     char _buf[INET_ADDRSTRLEN];
 };
 
-// Convert IP to c-style string. Notice that you can serialize ip_t to
+// Convert TCP to c-style string. Notice that you can serialize ip_t to
 // std::ostream directly. Use this function when you don't have streaming log.
 // Example: printf("ip=%s\n", ip2str(some_ip).c_str());
 IPStr ip2str(ip_t ip);
@@ -73,7 +73,7 @@ int ip2hostname(ip_t ip, std::string* hostname);
 // NOTE: This function caches result on first call.
 const char* my_hostname();
 
-// IP of this machine, IP_ANY on error.
+// TCP of this machine, IP_ANY on error.
 // NOTE: This function caches result on first call.
 ip_t my_ip();
 // String form.
@@ -81,12 +81,12 @@ const char* my_ip_cstr();
 
 // ipv4 + port
 struct EndPoint {
-    enum { IP, UCP, UNIX };
-    EndPoint() : ip(IP_ANY), port(0), kind(IP), socket_file("") {}
-    EndPoint(ip_t ip2, int port2) : ip(ip2), port(port2), kind(IP), socket_file("") {}
+    enum { TCP, UCP, UNIX };
+    EndPoint() : ip(IP_ANY), port(0), kind(TCP), socket_file("") {}
+    EndPoint(ip_t ip2, int port2) : ip(ip2), port(port2), kind(TCP), socket_file("") {}
     EndPoint(ip_t ip2, int port2, int k) : ip(ip2), port(port2), kind(k), socket_file("") {}
     explicit EndPoint(const sockaddr_in& in)
-        : ip(in.sin_addr), port(ntohs(in.sin_port)), kind(IP), socket_file("") {}
+        : ip(in.sin_addr), port(ntohs(in.sin_port)), kind(TCP), socket_file("") {}
     explicit EndPoint(const sockaddr_in& in, int k)
         : ip(in.sin_addr), port(ntohs(in.sin_port)), kind(k), socket_file("") {}
     explicit EndPoint(const char* file) : ip(IP_ANY), port(0), kind(UNIX),
@@ -94,6 +94,8 @@ struct EndPoint {
     explicit EndPoint(const std::string& file) : ip(IP_ANY), port(0), kind(UNIX),
                                             socket_file(file) {}
     
+    bool is_tcp() const { return TCP == kind; }
+    void set_tcp() { kind = TCP; }
     bool is_ucp() const { return UCP == kind; }
     void set_ucp() { kind = UCP; }
     bool is_unix() const { return UNIX == kind; }
