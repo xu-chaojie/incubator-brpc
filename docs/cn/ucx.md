@@ -183,8 +183,7 @@ public:
 1. UCX的安装
 
 ```
-  mkdir ~/github
-  cd github
+  cd ~/
   git clone git@github.com:openucx/ucx.git
   cd ucx
   ./autogen.sh
@@ -196,7 +195,7 @@ public:
 2. BRPC的编译
 
 ```
-  cd ~/github
+  cd ~/
   git clone git@github.com:opencurve/incubator-brpc.git
   cd incubator-brpc
   git checkout ucx_am
