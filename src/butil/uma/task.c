@@ -46,6 +46,7 @@ static void *task_routine(void *arg)
 		}
 	}
 	pthread_mutex_unlock(&task_lock);
+	return NULL;
 }
 
 void taskqueue_enqueue(struct task *task)
