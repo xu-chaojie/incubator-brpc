@@ -21,16 +21,25 @@
 #ifndef UMA_CPUFUNC_H
 #define UMA_CPUFUNC_H
 
+/*
+   The fls(),   flsl() and flsll() functions find the last bit set in value
+   and return the index of that bit.
+
+   Bits are numbered starting at 1 (the least significant bit).  A return
+   value of zero from any of these functions means that the argument was
+   zero.
+*/ 
+
 static __inline int
 fls(int mask)
 {
-	return (mask == 0 ? mask : (int)__builtin_clz((u_int)mask) + 1);
+	return (mask == 0 ? 0 : ( (sizeof(mask) * 8) - __builtin_clz(mask)));
 }
 
 static __inline int
 flsl(long mask)
 {
-	return (mask == 0 ? mask : (int)__builtin_clzl((u_long)mask) + 1);
+	return (mask == 0 ? 0 : ( (sizeof(mask) * 8) - __builtin_clzl(mask)));
 }
 
 #endif
