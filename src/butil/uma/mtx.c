@@ -1,0 +1,51 @@
+#include "uma/systm.h"
+#include "uma/mtx.h"
+
+#define INVALID_PTHREAD 0
+
+void mtx_init(struct mtx *m, const char *name, const char *type, int opts)
+{
+	pthread_mutex_init(&m->mtx_lock, NULL);
+	m->mtx_owner = INVALID_PTHREAD;
+}
+
+int mtx_trylock(struct mtx *m)
+{
+	if (pthread_mutex_trylock(&m->mtx_lock) == 0) {
+		m->mtx_owner = pthread_self();
+		return 1;
+	}
+
+	return 0;
+}
+
+void mtx_lock(struct mtx *m)
+{
+	pthread_mutex_lock(&m->mtx_lock);
+	m->mtx_owner = pthread_self();
+}
+
+void mtx_unlock(struct mtx *m)
+{
+	m->mtx_owner = INVALID_PTHREAD;
+	pthread_mutex_unlock(&m->mtx_lock);
+}
+
+void mtx_assert(struct mtx *m, int ma)
+{
+	if (ma & MA_OWNED) {
+		KASSERT(m->mtx_owner == pthread_self(), ("mtx not owned"));
+	}
+
+	if (ma & MA_NOTOWNED) {
+		KASSERT(m->mtx_owner != pthread_self(), ("mtx is owned"));
+	}
+}
+
+void mtx_sleep(pthread_cond_t *cond, struct mtx *m)
+{
+	m->mtx_owner = INVALID_PTHREAD;
+	pthread_cond_wait(cond, &m->mtx_lock);
+	m->mtx_owner = pthread_self();
+}
+
