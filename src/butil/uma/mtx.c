@@ -25,7 +25,12 @@
 
 void mtx_init(struct mtx *m, const char *name, const char *type, int opts)
 {
-	pthread_mutex_init(&m->mtx_lock, NULL);
+	pthread_mutexattr_t attr;
+
+	pthread_mutexattr_init(&attr);
+	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ADAPTIVE_NP);
+	pthread_mutex_init(&m->mtx_lock, &attr);
+	pthread_mutexattr_destroy(&attr);
 	m->mtx_owner = INVALID_PTHREAD;
 }
 
