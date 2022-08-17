@@ -33,9 +33,24 @@
 #include "butil/logging.h"                  // CHECK, LOG
 #include "butil/fd_guard.h"                 // butil::fd_guard
 #include "butil/iobuf.h"
+#include "butil/uma/uma/uma.h"
 
 namespace butil {
 namespace iobuf {
+
+static pthread_once_t uma_start_once = PTHREAD_ONCE_INIT;
+static uma_zone_t iobuf_zone;
+static void do_start_uma()
+{
+    uma_default_startup();
+    iobuf_zone = uma_zcreate("iobuf", IOBuf::DEFAULT_BLOCK_SIZE,
+         NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, UMA_ZONE_LARGE_KEG);
+}
+
+static inline void start_uma()
+{
+    pthread_once(&uma_start_once, do_start_uma);
+}
 
 typedef ssize_t (*iov_function)(int fd, const struct iovec *vector,
                                    int count, off_t offset);
@@ -156,14 +171,30 @@ inline void* cp(void *__restrict dest, const void *__restrict src, size_t n) {
     return memcpy(dest, src, n);
 }
 
+void *iobuf_malloc(size_t size)
+{
+    start_uma();
+    if (size == IOBuf::DEFAULT_BLOCK_SIZE)
+        return uma_zalloc(iobuf_zone, 0);
+    return ::malloc(size);
+}
+
+void iobuf_free(void *mem, size_t size)
+{
+    if (size == IOBuf::DEFAULT_BLOCK_SIZE)
+        uma_zfree(iobuf_zone, mem);
+    else
+        ::free(mem);
+}
+
 // Function pointers to allocate or deallocate memory for a IOBuf::Block
-void* (*blockmem_allocate)(size_t) = ::malloc;
-void  (*blockmem_deallocate)(void*) = ::free;
+void* (*blockmem_allocate)(size_t) = &iobuf_malloc;
+void  (*blockmem_deallocate)(void*, size_t) = &iobuf_free;
 
 // Use default function pointers
 void reset_blockmem_allocate_and_deallocate() {
-    blockmem_allocate = ::malloc;
-    blockmem_deallocate = ::free;
+    blockmem_allocate = iobuf_malloc;
+    blockmem_deallocate = iobuf_free;
 }
 
 butil::static_atomic<size_t> g_nblock = BUTIL_STATIC_ATOMIC_INIT(0);
@@ -200,6 +231,7 @@ struct IOBuf::Block {
     butil::atomic<int> nshared;
     uint16_t flags;
     uint16_t abi_check;  // original cap, never be zero.
+    uint32_t mem_size;
     uint32_t size;
     uint32_t cap;
     Block* portal_next;
@@ -212,6 +244,7 @@ struct IOBuf::Block {
         : nshared(1)
         , flags(0)
         , abi_check(0)
+        , mem_size(0)
         , size(0)
         , cap(data_size)
         , portal_next(NULL)
@@ -225,6 +258,7 @@ struct IOBuf::Block {
         : nshared(1)
         , flags(IOBUF_BLOCK_FLAGS_USER_DATA)
         , abi_check(0)
+        , mem_size(0)
         , size(data_size)
         , cap(data_size)
         , portal_next(NULL)
@@ -237,6 +271,7 @@ struct IOBuf::Block {
         : nshared(1)
         , flags(IOBUF_BLOCK_FLAGS_USER_DATA)
         , abi_check(0)
+        , mem_size(0)
         , size(data_size)
         , cap(data_size)
         , portal_next(NULL)
@@ -269,12 +304,13 @@ struct IOBuf::Block {
         check_abi();
         if (nshared.fetch_sub(1, butil::memory_order_release) == 1) {
             butil::atomic_thread_fence(butil::memory_order_acquire);
+            size_t size = this->mem_size;
             if (!flags) {
                 iobuf::g_nblock.fetch_sub(1, butil::memory_order_relaxed);
                 iobuf::g_blockmem.fetch_sub(cap + sizeof(Block),
                                             butil::memory_order_relaxed);
                 this->~Block();
-                iobuf::blockmem_deallocate(this);
+                iobuf::blockmem_deallocate(this, size);
             } else if (flags & IOBUF_BLOCK_FLAGS_USER_DATA) {
                 UserDataExtension* e = get_user_data_extension();
                 e->deleter2(data, e->arg);
@@ -318,8 +354,10 @@ inline IOBuf::Block* create_block(const size_t block_size) {
     if (mem == NULL) {
         return NULL;
     }
-    return new (mem) IOBuf::Block(mem + sizeof(IOBuf::Block),
+    auto p = new (mem) IOBuf::Block(mem + sizeof(IOBuf::Block),
                                   block_size - sizeof(IOBuf::Block));
+    p->mem_size = block_size;
+    return p;
 }
 
 inline IOBuf::Block* create_block() {
