@@ -471,10 +471,17 @@ void UcpWorker::DispatchAmMsgQ()
         msg->clear_flag(AMF_MSG_Q);
         UcpConnectionRef conn = msg->conn;
         if (!msg->has_flag(AMF_RNDV)) {
-            if (msg->length >= 8) {
+            if (msg->length >= sizeof(void *)) {
+                /* For buffer larger than size of pointer, we can
+                 * chain them together with a single link list,
+                 * the data buffer is not copied.
+                 */
                 msg->buf.append_user_data(msg->data, msg->length,
                     ReleaseWorkerData, this);
             } else {
+                /* Too small to store a pointer, copy and release
+                 * the data buffer immediately.
+                 */
                 if (msg->data) {
                     if (msg->length) {
                         msg->buf.append(msg->data, msg->length);
