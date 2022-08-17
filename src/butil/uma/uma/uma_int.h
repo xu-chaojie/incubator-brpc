@@ -176,7 +176,7 @@ struct uma_bucket {
 typedef struct uma_bucket * uma_bucket_t;
 
 struct uma_cache {
-        struct mtx	uc_mtx;
+	struct mtx		uc_mtx __cache_aligned;
 	uma_bucket_t	uc_freebucket;	/* Bucket we're freeing to */
 	uma_bucket_t	uc_allocbucket;	/* Bucket to allocate from */
 	uint64_t	uc_allocs;	/* Count of allocations */
@@ -192,7 +192,7 @@ typedef struct uma_cache * uma_cache_t;
  *
  */
 struct uma_keg {
-	struct mtx	uk_lock;	/* Lock for the keg */
+	struct mtx	    uk_lock __cache_aligned;	/* Lock for the keg */
 	pthread_cond_t	uk_cond;
 	struct uma_hash	uk_hash;
 
@@ -275,7 +275,7 @@ typedef struct uma_klink *uma_klink_t;
  *
  */
 struct uma_zone {
-	struct mtx	uz_lock; 	/* Lock for the zone */
+	struct mtx	    uz_lock __cache_aligned; 	/* Lock for the zone */
 	struct mtx 		*uz_lockptr;
 	pthread_cond_t	uz_cond;
 	const char		*uz_name;	/* Text name of the zone */
