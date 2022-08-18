@@ -67,8 +67,10 @@ typedef int bool;
 #define true 1
 #define false 0
 
-int uma_large_ppera = 512;
-int uma_normal_ppera = 16;
+#define SIZE_2MB  (2 * 1024 * 1024)
+#define SIZE_64KB  (64 * 1024)
+int uma_large_ppera = SIZE_2MB / PAGE_SIZE;
+int uma_normal_ppera = SIZE_64KB / PAGE_SIZE;
 
 /*
  * TODO:
@@ -256,6 +258,15 @@ void uma_print_stats(void);
 
 static inline void *uma_mmap(vm_size_t bytes)
 {
+	void *mem;
+
+	if (bytes >= SIZE_2MB) {
+		mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
+			MAP_PRIVATE|MAP_ANONYMOUS|MAP_HUGETLB, -1, 0);
+		if (mem != MAP_FAILED)
+			return mem;
+	}
+
 	return mmap(NULL, bytes, PROT_READ | PROT_WRITE,
 		MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
 }
