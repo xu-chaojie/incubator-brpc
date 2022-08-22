@@ -256,13 +256,13 @@ static void uma_startup2(void);
 void uma_print_zone(uma_zone_t);
 void uma_print_stats(void);
 
-static inline void *uma_mmap(vm_size_t bytes)
+static inline void *uma_mmap(int flags, vm_size_t bytes)
 {
 	void *mem;
 
 	if (bytes >= SIZE_2MB) {
 		mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
-			MAP_PRIVATE|MAP_ANONYMOUS|MAP_HUGETLB, -1, 0);
+			MAP_PRIVATE|MAP_ANONYMOUS|flags, -1, 0);
 		if (mem != MAP_FAILED)
 			return mem;
 	}
@@ -1076,8 +1076,12 @@ startup_alloc(uma_zone_t zone, vm_size_t bytes, uint8_t *pflag, int wait)
 static void *
 page_alloc(uma_zone_t zone, vm_size_t bytes, uint8_t *pflag, int wait)
 {
+	int map_flags = 0;
 	*pflag = UMA_SLAB_KMEM;
-	return uma_mmap(bytes);
+	if (bytes >= SIZE_2MB) {
+		map_flags |= MAP_HUGETLB;
+	}
+	return uma_mmap(map_flags, bytes);
 }
 
 /*
@@ -1710,7 +1714,7 @@ void
 uma_default_startup(void)
 {
 	int pages = (mp_maxid + 1) * 100;
-	uma_startup(uma_mmap(pages * PAGE_SIZE), pages);
+	uma_startup(uma_mmap(0, pages * PAGE_SIZE), pages);
 }
 
 /* Public functions */
@@ -3080,7 +3084,7 @@ uma_zone_reserve_kva(uma_zone_t zone, int count)
 		pages++;
 	pages *= keg->uk_ppera;
 
-	kva = (vm_offset_t)uma_mmap((vm_size_t)pages * PAGE_SIZE);
+	kva = (vm_offset_t)uma_mmap(0, (vm_size_t)pages * PAGE_SIZE);
 	if (kva == 0)
 		return (0);
 
