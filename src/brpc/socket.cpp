@@ -1801,7 +1801,6 @@ void* Socket::KeepWrite(void* void_arg) {
         // Update(8/15/2017): Not working, performance downgraded.
         //if (nw <= 0 || req->data.empty()/*note*/) {
         if (nw <= 0) {
-            LOG(INFO) << "nw <= 0";
             s_vars->nwaitepollout << 1;
             bool pollin = (s->_on_edge_triggered_events != NULL);
             // NOTE: Waiting epollout within timeout is a must to force
