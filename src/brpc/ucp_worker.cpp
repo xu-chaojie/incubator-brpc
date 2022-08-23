@@ -112,8 +112,6 @@ UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
     TAILQ_INIT(&recv_comp_q_);
     // This can not be changed dynamically
     out_of_order_ = FLAGS_brpc_ucp_deliver_out_of_order;
-//    worker_active_ = 0;
-//    wakeup_flag_ = 0;
     // Because UCX ep does not allow us to set private data,
     // so we have to map ep to connection object, here we use
     // pctrie to perform lookup, it should be faster than
