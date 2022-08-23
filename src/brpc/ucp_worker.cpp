@@ -24,16 +24,20 @@
 
 #include <gflags/gflags.h>
 
+#include <sys/param.h>
 #include <endian.h>
 #include <limits.h>
 #include <poll.h>
 #include <stdlib.h>
+#include <sys/time.h>
 
 #define AM_ID  0
 
 namespace brpc {
 
-DEFINE_bool(brpc_ucp_worker_busy_poll, true, "Worker busy poll");
+DEFINE_bool(brpc_ucp_worker_busy_poll, true, "Enable/disable busy poll");
+DEFINE_int32(brpc_ucp_worker_poll_time, 60, "Polling duration in microseconds)");
+DEFINE_int32(brpc_ucp_worker_poll_yield, 0, "Thread yields after accumulated so many polling loops");
 DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
 
 static void *alloc_trie_node(struct butil::pctrie *ptree)
@@ -89,13 +93,16 @@ UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
     , ucp_worker_(NULL)
     , free_data_(NULL)
     , free_data_count_(0)
+    , worker_active_(0)
+    , wakeup_flag_(0)
     , send_list_(NULL)
 {
     TAILQ_INIT(&msg_q_);
     TAILQ_INIT(&recv_comp_q_);
     // This can not be changed dynamically
     out_of_order_ = FLAGS_brpc_ucp_deliver_out_of_order;
-
+//    worker_active_ = 0;
+//    wakeup_flag_ = 0;
     // Because UCX ep does not allow us to set private data,
     // so we have to map ep to connection object, here we use
     // pctrie to perform lookup, it should be faster than
@@ -111,6 +118,7 @@ UcpWorker::~UcpWorker()
 
 void *UcpWorker::operator new(size_t size)
 {
+    size = roundup(size, BAIDU_CACHELINE_SIZE);
     return aligned_alloc(BAIDU_CACHELINE_SIZE, size);
 }
 
@@ -245,6 +253,9 @@ void UcpWorker::Join()
 
 void UcpWorker::Wakeup()
 {
+    if (wakeup_flag_.load(std::memory_order_relaxed))
+        return;
+    wakeup_flag_.exchange(1, std::memory_order_relaxed);
     ucs_status_t stat = ucp_worker_signal(ucp_worker_);
     if (stat != UCS_OK) {
         LOG(ERROR) << "ucp_worker_signal error ("
@@ -256,8 +267,9 @@ void UcpWorker::MaybeWakeup()
 {
     if (FLAGS_brpc_ucp_worker_busy_poll)
         return;
-    if (pthread_self() != worker_tid_)
+    if (pthread_self() != worker_tid_) {
         Wakeup();
+    }
 }
 
 void UcpWorker::DispatchExternalEvent(EventCallbackRef e)
@@ -321,14 +333,23 @@ void* UcpWorker::RunWorker(void *arg)
 void UcpWorker::DoRunWorker()
 {
     struct pollfd poll_info;
+    struct timeval tv_start{0,0}, tv_end{0,0}, tv_int{0,0}, tv_now{0,0};
+    int count = 0;
 
+    tv_int.tv_sec = 0;
+    tv_int.tv_usec = FLAGS_brpc_ucp_worker_poll_time;
     while (status_ != STOPPING) {
         if (!FLAGS_brpc_ucp_worker_busy_poll) {
-            poll_info.fd = event_fd_;
-            poll_info.events = POLLIN;
-            poll(&poll_info, 1, 1000);
+            if (!wakeup_flag_.exchange(0, std::memory_order_relaxed)) {
+                poll_info.fd = event_fd_;
+                poll_info.events = POLLIN;
+                poll(&poll_info, 1, 1000);
+            }
+            worker_active_.store(1, std::memory_order_relaxed);
+            gettimeofday(&tv_start, NULL);
+            timeradd(&tv_start, &tv_int, &tv_end);
+            count = 0;
         }
-
 again:
         mutex_.lock();
         while (ucp_worker_progress(ucp_worker_))
@@ -345,9 +366,23 @@ again:
         mutex_.unlock();
         if (stat == UCS_ERR_BUSY) /* some events are arrived already */
             goto again;
+        if (!FLAGS_brpc_ucp_worker_busy_poll) {
+            count++;
+            gettimeofday(&tv_now, NULL);
+            if (timercmp(&tv_now, &tv_end, <)) {
+                if (BAIDU_UNLIKELY(FLAGS_brpc_ucp_worker_poll_yield &&
+                    count >= FLAGS_brpc_ucp_worker_poll_yield)) {
+                    pthread_yield();
+                }
+                goto again;
+            }
+
+            worker_active_.store(-1, std::memory_order_relaxed);
+        }
         CHECK(stat == UCS_OK) << "ucx_worker_arm failed ("
             << ucs_status_string(stat) << ")";
     }
+    worker_active_.store(0, std::memory_order_relaxed);
 }
 
 static void MsgHeaderIn(MsgHeader *host, MsgHeader *net)
@@ -928,7 +963,7 @@ void UcpWorker::SendRequest(UcpAmSendInfo *msgs[], int size)
              butil::memory_order_release));
 }
 
-void UcpWorker::KeepSendRequest(void)
+bool UcpWorker::KeepSendRequest(void)
 {
     ucp_request_param_t param;
     UcpAmSendInfo *msg = NULL, *prev = NULL, *next = NULL;
@@ -937,7 +972,7 @@ void UcpWorker::KeepSendRequest(void)
 
     // assert(mutex_.is_locked_by_me());
     if (!send_list_.load(butil::memory_order_relaxed))
-        return;
+        return false;
     msg = send_list_.exchange(NULL, butil::memory_order_acquire);
 
     // Reverse the list to dispatch it in order
@@ -974,6 +1009,7 @@ void UcpWorker::KeepSendRequest(void)
 
         msg = next;
     }
+    return true;
 }
 
 ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn, butil::IOBuf *buf)
@@ -1027,7 +1063,26 @@ ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn,
         SendRequest(batch, batch_num);
     }
  
-    MaybeWakeup();
+    if (pthread_self() != worker_tid_) {
+        if (FLAGS_brpc_ucp_worker_busy_poll)
+            goto out;
+        if (worker_active_.load(std::memory_order_relaxed)) {
+            MaybeWakeup();
+            goto out;
+        }
+        if (!mutex_.try_lock()) {
+            MaybeWakeup();
+            goto out;
+        }
+        int have = KeepSendRequest();
+        mutex_.unlock();
+        if (have)
+            MaybeWakeup();
+    } else {
+        MaybeWakeup();
+    }
+
+out:
     errno = err;
     return total ? total : -1;
 }

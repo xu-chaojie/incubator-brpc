@@ -100,7 +100,7 @@ private:
     static void ReleaseWorkerData(void *data, void *arg);
     void RecycleWorkerData();
     void SendRequest(brpc::UcpAmSendInfo* [], int size);
-    void KeepSendRequest(void);
+    bool KeepSendRequest(void);
     void CancelRequests(const UcpConnectionRef &ref);
     void SaveInputMessage(const UcpConnectionRef &conn, UcpAmMsg *msg);
     void MergeInputMessage(UcpConnection *conn);
@@ -113,7 +113,8 @@ private:
     UcpConnectionRef FindConnection(const ucp_ep_h ep);
 
 private:
-    bthread::Mutex mutex_;
+    bthread::Mutex mutex_ BAIDU_CACHELINE_ALIGNMENT;
+
     std::list<EventCallbackRef> external_events_;
     Status status_;
     // Worker id
@@ -148,10 +149,9 @@ private:
     std::atomic<void *>free_data_ BAIDU_CACHELINE_ALIGNMENT;
     int free_data_count_;
 
-    union {
-        std::atomic<UcpAmSendInfo *>send_list_;
-        char cacheline__[BAIDU_CACHELINE_SIZE];
-    } BAIDU_CACHELINE_ALIGNMENT;
+    std::atomic<int> worker_active_ BAIDU_CACHELINE_ALIGNMENT;
+    std::atomic<int> wakeup_flag_;
+    std::atomic<UcpAmSendInfo *>send_list_;
 
     friend class UcpConnection;
 };
