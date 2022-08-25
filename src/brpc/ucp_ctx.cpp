@@ -17,6 +17,8 @@
 #include "brpc/ucp_ctx.h"
 #include "butil/logging.h"
 
+#include <errno.h>
+#include <fcntl.h>
 #include <string.h>
 #include <arpa/inet.h>
 #include <pthread.h>
@@ -24,12 +26,45 @@
 #include <deque>
 #include <utility>
 
+#include <gflags/gflags.h>
+
 namespace brpc {
 
 typedef std::pair<ucp_worker_h, ucp_ep_h> UcpItem;
 
+DEFINE_int32(brpc_set_cpu_latency, -1, "Set cpu latency in microseconds");
+
 UCP_Context *g_ucp_ctx;
 static pthread_once_t g_ucp_ctx_init = PTHREAD_ONCE_INIT;
+
+static int set_cpu_latency(int *fd)
+{
+    int err = 0;
+    const int latency = FLAGS_brpc_set_cpu_latency;
+
+    *fd = -1;
+    if (latency < 0)
+        return 0;
+
+    LOG(INFO) << "Setting cpu latency to " << latency << "us";
+    *fd = open("/dev/cpu_dma_latency", O_WRONLY | O_CLOEXEC);
+    if (*fd < 0) {
+        err = errno;
+        goto err_out;
+    }
+    if (write(*fd, &latency, sizeof(latency)) != sizeof(latency)) {
+        err = errno;
+        close(*fd);
+        goto err_out;
+    }
+    return 0;
+
+err_out:
+    *fd = -1;
+    LOG(ERROR) << "open /dev/cpu_dma_latency " << strerror(err)
+               << " - need root permissions";
+    return -1;
+}
 
 static void init_ucx_ctx() {
     LOG(INFO) << "Running with ucp library version: " << ucp_get_version_string();
@@ -48,6 +83,7 @@ UCP_Context* get_or_new_ucp_ctx() {
 UCP_Context::UCP_Context()
 {
     context_ = NULL;
+    cpu_latency_fd_ = -1;
 }
 
 UCP_Context::~UCP_Context()
@@ -60,6 +96,10 @@ void UCP_Context::fini()
     if (context_) {
         ucp_cleanup(context_);
         context_ = NULL;
+        if (cpu_latency_fd_ != -1) {
+            ::close(cpu_latency_fd_);
+            cpu_latency_fd_ = -1;
+        }
     }
 }
 
@@ -83,6 +123,10 @@ int UCP_Context::init()
                    << ucs_status_string(status) << ")";
         context_ = NULL;
         ret = -1;
+    }
+
+    if (ret == 0) {
+        (void)set_cpu_latency(&cpu_latency_fd_);
     }
 
     return ret;

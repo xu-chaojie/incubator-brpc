@@ -39,6 +39,7 @@ private:
     DISALLOW_COPY_AND_ASSIGN(UCP_Context);
 
     ucp_context_h context_;
+    int cpu_latency_fd_;
 };
 
 UCP_Context* get_or_new_ucp_ctx();
