@@ -25,6 +25,7 @@
 
 #include <deque>
 #include <utility>
+#include <memory>
 
 #include <gflags/gflags.h>
 
@@ -133,7 +134,21 @@ int UCP_Context::init()
     ucp_params_t ucp_params;
     ucs_status_t status;
     int ret = 0;
+    ucp_config_t *config;
 
+    status = ucp_config_read(nullptr, nullptr, &config);
+    if (status != UCS_OK) {
+        LOG(ERROR) << "failed to ucp_config_read ("
+                   << ucs_status_string(status) << ")";
+        return -1;
+    }
+    std::unique_ptr<ucp_config_t, decltype(&ucp_config_release)>
+        config_ref(config, ucp_config_release);
+
+    ucp_config_modify(config, "UCX_TCP_CM_REUSEADDR", "y");
+    ucp_config_modify(config, "UCX_ASYNC_MAX_EVENTS", "100000");
+    ucp_config_modify(config, "UCX_RDMA_CM_REUSEADDR", "y");
+  
     memset(&ucp_params, 0, sizeof(ucp_params));
     /* UCP initialization */
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES |
@@ -142,7 +157,7 @@ int UCP_Context::init()
                           UCP_FEATURE_WAKEUP;
     ucp_params.mt_workers_shared = 1;
 
-    status = ucp_init(&ucp_params, NULL, &context_);
+    status = ucp_init(&ucp_params, config, &context_);
     if (status != UCS_OK) {
         LOG(ERROR) << "failed to ucp_init ("
                    << ucs_status_string(status) << ")";
