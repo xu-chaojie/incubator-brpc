@@ -186,6 +186,7 @@ public:
   cd ~/
   git clone git@github.com:openucx/ucx.git
   cd ucx
+  git checkout v1.13.x
   ./autogen.sh
   ./configure --prefix=/usr/local/ucx
   make
