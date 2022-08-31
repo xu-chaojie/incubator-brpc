@@ -31,8 +31,6 @@
 
 namespace brpc {
 
-typedef std::pair<ucp_worker_h, ucp_ep_h> UcpItem;
-
 static bool validate_err_mode(const char* flagname, const std::string& mode);
 
 DEFINE_int32(brpc_set_cpu_latency, -1, "Set cpu latency in microseconds");
