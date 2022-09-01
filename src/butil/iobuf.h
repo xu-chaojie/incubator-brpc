@@ -31,7 +31,6 @@
 #include "butil/macros.h"
 #include "butil/reader_writer.h"
 #include "butil/binary_printer.h"
-#include "butil/autovector.h"
 #include <ucp/api/ucp.h>
 
 // For IOBuf::appendv(const const_iovec*, size_t). The only difference of this
@@ -51,7 +50,7 @@ struct ssl_st;
 
 namespace butil {
 
-typedef autovector<ucp_dt_iov_t, 64> iobuf_ucp_iov_t;
+typedef std::vector<ucp_dt_iov_t> iobuf_ucp_iov_t;
 
 // IOBuf is a non-continuous buffer that can be cut and combined w/o copying
 // payload. It can be read from or flushed into file descriptors as well.
