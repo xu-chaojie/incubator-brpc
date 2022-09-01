@@ -50,6 +50,7 @@ DEFINE_bool(brpc_ucp_worker_busy_poll, true, "Enable/disable busy poll");
 DEFINE_int32(brpc_ucp_worker_poll_time, 60, "Polling duration in microseconds)");
 DEFINE_int32(brpc_ucp_worker_poll_yield, 0, "Thread yields after accumulated so many polling loops");
 DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
+DEFINE_bool(brpc_ucp_close_flush, false, "flush when close");
 
 static void *alloc_trie_node(struct butil::pctrie *ptree)
 {
@@ -816,7 +817,9 @@ void UcpWorker::Release(UcpConnectionRef conn)
 
     CancelRequests(conn);
 
-    request = ucp_ep_close_nb(ep, UCP_EP_CLOSE_MODE_FLUSH);
+    int mode = FLAGS_brpc_ucp_close_flush ?
+        UCP_EP_CLOSE_MODE_FLUSH : UCP_EP_CLOSE_MODE_FORCE;
+    request = ucp_ep_close_nb(ep, mode);
     if (request == NULL) {
         conn->ep_ = NULL;
         DLOG(INFO) << "closed ep " << ep;
