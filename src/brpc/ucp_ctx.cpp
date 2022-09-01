@@ -173,8 +173,10 @@ int create_ucp_worker(ucp_worker_h *ucp_worker, int *efd, int events)
 
     memset(&worker_params, 0, sizeof(worker_params));
 
-    worker_params.field_mask  = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
+    worker_params.field_mask  = UCP_WORKER_PARAM_FIELD_THREAD_MODE |
+                                UCP_WORKER_PARAM_FIELD_AM_ALIGNMENT;
     worker_params.thread_mode = UCS_THREAD_MODE_SINGLE;
+    worker_params.am_alignment = 8; // FIXME, need sync with spdk
     if (events) {
         worker_params.field_mask |= UCP_WORKER_PARAM_FIELD_EVENTS;
         worker_params.events = events;
