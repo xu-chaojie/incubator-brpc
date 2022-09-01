@@ -69,8 +69,10 @@ void UcpAmMsg::Release(UcpAmMsg *o)
     o->req = nullptr;
     o->flags = 0;
     o->buf.clear();
-    if (o->iov.size() > FLAGS_brpc_ucp_iov_reserve)
+    if (o->iov.size() > FLAGS_brpc_ucp_iov_reserve) {
         o->iov.resize(FLAGS_brpc_ucp_iov_reserve);
+        o->iov.shrink_to_fit();
+    }
     butil::return_resource<UcpAmMsg>(o->id);
 }
 
@@ -98,8 +100,10 @@ void UcpAmSendInfo::Release(UcpAmSendInfo *o)
     o->req = nullptr;
     o->nvec = 0;
     o->buf.clear();
-    if (o->iov.size() > FLAGS_brpc_ucp_iov_reserve)
+    if (o->iov.size() > FLAGS_brpc_ucp_iov_reserve) {
         o->iov.resize(FLAGS_brpc_ucp_iov_reserve);
+        o->iov.shrink_to_fit();
+    }
     butil::return_resource<UcpAmSendInfo>(o->id);
 }
 
