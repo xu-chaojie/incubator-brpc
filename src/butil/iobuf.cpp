@@ -1004,6 +1004,8 @@ ssize_t IOBuf::fill_ucp_iov(iobuf_ucp_iov_t *_vec, int max_vec,
     int nvec = 0;
     size_t cur_len = 0;
 
+    vec.reserve(nref);
+
     do {
         IOBuf::BlockRef const& r = _ref_at(nvec);
         if (vec.size() < (size_t)nvec+1)
@@ -1729,6 +1731,13 @@ ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, iobuf_ucp_iov_t 
     size_t space = 0;
     Block* prev_p = NULL;
     Block* p = _block;
+    int size_hint;
+
+    size_hint = (max_count + DEFAULT_BLOCK_SIZE - 1)/DEFAULT_BLOCK_SIZE;
+    if (size_hint < 16)
+        size_hint = 16;
+    vec.reserve(size_hint);
+
     nvec = 0;
     do {
         if (vec.size() < (size_t)nvec + 1)
