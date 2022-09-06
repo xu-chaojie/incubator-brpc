@@ -3190,37 +3190,6 @@ uma_zone_exhausted_nolock(uma_zone_t zone)
 	return (zone->uz_flags & UMA_ZFLAG_FULL);
 }
 
-void *
-uma_large_malloc(vm_size_t size, int wait)
-{
-	void *mem;
-	uma_slab_t slab;
-	uint8_t flags;
-
-	slab = zone_alloc_item(slabzone, NULL, wait);
-	if (slab == NULL)
-		return (NULL);
-	mem = page_alloc(NULL, size, &flags, wait);
-	if (mem) {
-		vsetslab((vm_offset_t)mem, slab);
-		slab->us_data = mem;
-		slab->us_flags = flags | UMA_SLAB_MALLOC;
-		slab->us_size = size;
-	} else {
-		zone_free_item(slabzone, slab, NULL, SKIP_NONE);
-	}
-
-	return (mem);
-}
-
-void
-uma_large_free(uma_slab_t slab)
-{
-
-	page_free(slab->us_data, slab->us_size, slab->us_flags);
-	zone_free_item(slabzone, slab, NULL, SKIP_NONE);
-}
-
 static void
 uma_zero_item(void *item, uma_zone_t zone)
 {
