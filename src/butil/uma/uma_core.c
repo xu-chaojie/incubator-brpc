@@ -1121,7 +1121,7 @@ noobj_alloc(uma_zone_t zone, vm_size_t bytes, uint8_t *flags, int wait)
 static void
 page_free(void *mem, vm_size_t size, uint8_t flags)
 {
-	free(mem);
+	munmap(mem, size);
 }
 
 /*
