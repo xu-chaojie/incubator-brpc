@@ -26,6 +26,7 @@
 #include <errno.h>                         // errno
 #include <limits.h>                        // CHAR_BIT
 #include <stdexcept>                       // std::invalid_argument
+#include "gflags/gflags.h"
 #include "butil/build_config.h"             // ARCH_CPU_X86_64
 #include "butil/atomicops.h"                // butil::atomic
 #include "butil/thread_local.h"             // thread_atexit
@@ -34,6 +35,8 @@
 #include "butil/fd_guard.h"                 // butil::fd_guard
 #include "butil/iobuf.h"
 #include "butil/uma/uma/uma.h"
+
+DEFINE_int32(butil_iobuf_max, 400000, "Maximum number of iobuf blocks allowed");
 
 namespace butil {
 namespace iobuf {
@@ -45,6 +48,9 @@ static void do_start_uma()
     uma_default_startup();
     iobuf_zone = uma_zcreate("iobuf", IOBuf::DEFAULT_BLOCK_SIZE,
          NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, UMA_ZONE_LARGE_KEG);
+    int max_item = uma_zone_set_max(iobuf_zone, FLAGS_butil_iobuf_max);
+    LOG(INFO) << "Maximum allowed iobuf block is : " << max_item;
+    uma_zone_set_warning(iobuf_zone, "Maximum allowed block reached!");
 }
 
 static inline void start_uma()
