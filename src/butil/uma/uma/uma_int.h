@@ -378,6 +378,9 @@ void uma_large_free(uma_slab_t slab);
 #define	ZONE_UNLOCK(z)	mtx_unlock((z)->uz_lockptr)
 #define	ZONE_LOCK_FINI(z)	mtx_destroy(&(z)->uz_lock)
 
+#define CACHE_LOCK(c)   mtx_lock(&(c)->uc_mtx)
+#define CACHE_UNLOCK(c) mtx_unlock(&(c)->uc_mtx)
+
 /*
  * Find a slab within a hash table.  This is used for OFFPAGE zones to lookup
  * the slab structure.

@@ -712,9 +712,8 @@ cache_drain_safe_cpu(uma_zone_t zone)
 
 	b1 = b2 = NULL;
 	ZONE_LOCK(zone);
-	//critical_enter();
 	cache = &zone->uz_cpu[curcpu];
-	mtx_lock(&cache->uc_mtx);
+	CACHE_LOCK(cache);
 	if (cache->uc_allocbucket) {
 		if (cache->uc_allocbucket->ub_cnt != 0)
 			LIST_INSERT_HEAD(&zone->uz_buckets,
@@ -731,8 +730,7 @@ cache_drain_safe_cpu(uma_zone_t zone)
 			b2 = cache->uc_freebucket;
 		cache->uc_freebucket = NULL;
 	}
-	//critical_exit();
-	mtx_unlock(&cache->uc_mtx);
+	CACHE_UNLOCK(cache);
 	ZONE_UNLOCK(zone);
 	if (b1)
 		bucket_free(zone, b1, NULL);
@@ -2115,10 +2113,9 @@ uma_zalloc_arg(uma_zone_t zone, void *udata, int flags)
 	 * the current cache; when we re-acquire the critical section, we
 	 * must detect and handle migration if it has occurred.
 	 */
-	//critical_enter();
 	cpu = curcpu;
 	cache = &zone->uz_cpu[cpu];
-	mtx_lock(&cache->uc_mtx);
+	CACHE_LOCK(cache);
 zalloc_start:
 	bucket = cache->uc_allocbucket;
 	if (bucket != NULL && bucket->ub_cnt > 0) {
@@ -2129,8 +2126,7 @@ zalloc_start:
 #endif
 		KASSERT(item != NULL, ("uma_zalloc: Bucket pointer mangled."));
 		cache->uc_allocs++;
-//		critical_exit();
-		mtx_unlock(&cache->uc_mtx);
+		CACHE_UNLOCK(cache);
 		if (zone->uz_ctor != NULL &&
 		    zone->uz_ctor(item, zone->uz_size, udata, flags) != 0) {
 			atomic_add_long(&zone->uz_fails, 1);
@@ -2164,8 +2160,7 @@ zalloc_start:
 	 */
 	bucket = cache->uc_allocbucket;
 	cache->uc_allocbucket = NULL;
-//	critical_exit();
-	mtx_unlock(&cache->uc_mtx);
+	CACHE_UNLOCK(cache);
 	if (bucket != NULL)
 		bucket_free(zone, bucket, udata);
 
@@ -2188,10 +2183,9 @@ zalloc_start:
 		ZONE_LOCK(zone);
 		lockfail = 1;
 	}
-	//critical_enter();
 	cpu = curcpu;
 	cache = &zone->uz_cpu[cpu];
-	mtx_lock(&cache->uc_mtx);
+	CACHE_LOCK(cache);
 
 	/*
 	 * Since we have locked the zone we may as well send back our stats.
@@ -2220,8 +2214,7 @@ zalloc_start:
 		goto zalloc_start;
 	}
 	/* We are no longer associated with this CPU. */
-	//critical_exit();
-	mtx_unlock(&cache->uc_mtx);
+	CACHE_UNLOCK(cache);
 
 	/*
 	 * We bump the uz count when the cache size is insufficient to
@@ -2239,10 +2232,9 @@ zalloc_start:
 	bucket = zone_alloc_bucket(zone, udata, flags);
 	if (bucket != NULL) {
 		ZONE_LOCK(zone);
-//		critical_enter();
 		cpu = curcpu;
 		cache = &zone->uz_cpu[cpu];
-		mtx_lock(&cache->uc_mtx);
+		CACHE_LOCK(cache);
 		/*
 		 * See if we lost the race or were migrated.  Cache the
 		 * initialized bucket to make this less likely or claim
@@ -2658,10 +2650,9 @@ uma_zfree_arg(uma_zone_t zone, void *item, void *udata)
 	 * detect and handle migration if it has occurred.
 	 */
 zfree_restart:
-	//critical_enter();
 	cpu = curcpu;
 	cache = &zone->uz_cpu[cpu];
-	mtx_lock(&cache->uc_mtx);
+	CACHE_LOCK(cache);
 zfree_start:
 	/*
 	 * Try to free into the allocbucket first to give LIFO ordering
@@ -2677,8 +2668,7 @@ zfree_start:
 		bucket->ub_bucket[bucket->ub_cnt] = item;
 		bucket->ub_cnt++;
 		cache->uc_frees++;
-		mtx_unlock(&cache->uc_mtx);
-		//critical_exit();
+        	CACHE_UNLOCK(cache);
 		return;
 	}
 
@@ -2690,8 +2680,7 @@ zfree_start:
 	 * thread-local state specific to the cache from prior to releasing
 	 * the critical section.
 	 */
-	//critical_exit();
-	mtx_unlock(&cache->uc_mtx);
+	CACHE_UNLOCK(cache);
 	if (zone->uz_count == 0 || bucketdisable)
 		goto zfree_item;
 
@@ -2701,11 +2690,10 @@ zfree_start:
 		ZONE_LOCK(zone);
 		lockfail = 1;
 	}
-//	critical_enter();
 	cpu = curcpu;
 	cache = &zone->uz_cpu[cpu];
 
-	mtx_lock(&cache->uc_mtx);
+	CACHE_LOCK(cache);
 	/*
 	 * Since we have locked the zone we may as well send back our stats.
 	 */
@@ -2721,8 +2709,7 @@ zfree_start:
 	}
 	cache->uc_freebucket = NULL;
 	/* We are no longer associated with this CPU. */
-	mtx_unlock(&cache->uc_mtx);
-	//critical_exit();
+	CACHE_UNLOCK(cache);
 
 	/* Can we throw this on the zone full list? */
 	if (bucket != NULL) {
@@ -2748,10 +2735,9 @@ zfree_start:
 #endif
 	bucket = bucket_alloc(zone, udata, M_NOWAIT);
 	if (bucket) {
-//		critical_enter();
 		cpu = curcpu;
 		cache = &zone->uz_cpu[cpu];
-		mtx_lock(&cache->uc_mtx);
+		CACHE_LOCK(cache);
 		if (cache->uc_freebucket == NULL) {
 			cache->uc_freebucket = bucket;
 			goto zfree_start;
@@ -2760,8 +2746,7 @@ zfree_start:
 		 * We lost the race, start over.  We have to drop our
 		 * critical section to free the bucket.
 		 */
-		//critical_exit();
-		mtx_unlock(&cache->uc_mtx);
+		CACHE_UNLOCK(cache);
 		bucket_free(zone, bucket, udata);
 		goto zfree_restart;
 	}
