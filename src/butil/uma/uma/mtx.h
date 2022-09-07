@@ -34,9 +34,14 @@
 #define	MTX_QUIET	0x080
 #define	MTX_DUPOK	0x100
 
+#define MTX_DEBUG
 struct mtx {
 	pthread_mutex_t	mtx_lock;
 	pthread_t       mtx_owner;
+#ifdef MTX_DEBUG
+	const char *	mtx_file;
+	int		mtx_line;
+#endif
 };
 
 #define MA_OWNED	0
@@ -47,7 +52,13 @@ struct mtx {
 void mtx_init(struct mtx *m, const char *name, const char *type, int opts);
 void mtx_destroy(struct mtx *m);
 int  mtx_trylock(struct mtx *m);
-void mtx_lock(struct mtx *m);
+#define mtx_trylock(m) \
+	mtx_trylock_impl(m, __FILE__,  __LINE__)
+int  mtx_trylock_impl(struct mtx *m, const char *file, int line);
+#define mtx_lock(m) \
+	mtx_lock_impl(m, __FILE__, __LINE__)
+
+void mtx_lock_impl(struct mtx *m, const char *file, int line);
 
 #define mtx_lock_flags(m, f) mtx_lock(m)
 

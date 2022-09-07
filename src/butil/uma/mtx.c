@@ -32,27 +32,43 @@ void mtx_init(struct mtx *m, const char *name, const char *type, int opts)
 	pthread_mutex_init(&m->mtx_lock, &attr);
 	pthread_mutexattr_destroy(&attr);
 	m->mtx_owner = INVALID_PTHREAD;
+#ifdef MTX_DEBUG
+	m->mtx_file = "";
+	m->mtx_line = 0;
+#endif
 }
 
-int mtx_trylock(struct mtx *m)
+int mtx_trylock_impl(struct mtx *m, const char *file, int line)
 {
 	if (pthread_mutex_trylock(&m->mtx_lock) == 0) {
 		m->mtx_owner = pthread_self();
+#ifdef MTX_DEBUG
+		m->mtx_file = file;
+		m->mtx_line = line;
+#endif
 		return 1;
 	}
 
 	return 0;
 }
 
-void mtx_lock(struct mtx *m)
+void mtx_lock_impl(struct mtx *m, const char *file, int line)
 {
 	pthread_mutex_lock(&m->mtx_lock);
 	m->mtx_owner = pthread_self();
+#ifdef MTX_DEBUG
+	m->mtx_file = file;
+	m->mtx_line = line;
+#endif
 }
 
 void mtx_unlock(struct mtx *m)
 {
 	m->mtx_owner = INVALID_PTHREAD;
+#ifdef MTX_DEBUG
+	m->mtx_file = "";
+	m->mtx_line = 0;
+#endif
 	pthread_mutex_unlock(&m->mtx_lock);
 }
 
@@ -69,8 +85,16 @@ void mtx_assert(struct mtx *m, int ma)
 
 void mtx_sleep(pthread_cond_t *cond, struct mtx *m)
 {
+#ifdef MTX_DEBUG
+	const char *saved_file = m->mtx_file;
+	int saved_line = m->mtx_line;
+#endif
 	m->mtx_owner = INVALID_PTHREAD;
 	pthread_cond_wait(cond, &m->mtx_lock);
 	m->mtx_owner = pthread_self();
+#ifdef MTX_DEBUG
+	m->mtx_file = saved_file;
+	m->mtx_line = saved_line;
+#endif
 }
 
