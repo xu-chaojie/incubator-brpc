@@ -214,8 +214,6 @@ struct uma_keg {
 	uma_alloc	uk_allocf;	/* Allocation function */
 	uma_free	uk_freef;	/* Free routine */
 
-	u_long		uk_offset;	/* Next free offset from base KVA */
-	vm_offset_t	uk_kva;		/* Zone base KVA */
 	uma_zone_t	uk_slabzone;	/* Slab zone backing us, if OFFPAGE */
 
 	uint32_t	uk_pgoff;	/* Offset to uma_slab struct */
