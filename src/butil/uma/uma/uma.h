@@ -369,20 +369,13 @@ typedef void (*uma_free)(void *item, vm_size_t size, uint8_t pflag);
  * Sets up the uma allocator. (Called by vm_mem_init)
  *
  * Arguments:
- *	bootmem  A pointer to memory used to bootstrap the system.
  *
  * Returns:
  *	Nothing
  *
- * Discussion:
- *	This memory is used for zones which allocate things before the
- *	backend page supplier can give us pages.  It should be
- *	UMA_SLAB_SIZE * boot_pages bytes. (see uma_int.h)
- *
  */
 
-void uma_startup(void *bootmem, int boot_pages);
-void uma_default_startup(void);
+void uma_startup(void);
 
 /*
  * Reclaims unused memory for all zones
