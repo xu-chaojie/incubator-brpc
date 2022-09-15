@@ -271,11 +271,6 @@ static inline void *uma_mmap(int flags, vm_size_t bytes)
 		MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
 }
 
-#ifdef INVARIANTS
-static void uma_dbg_free(uma_zone_t zone, uma_slab_t slab, void *item);
-static void uma_dbg_alloc(uma_zone_t zone, uma_slab_t slab, void *item);
-#endif
-
 static int zone_warnings = 1;
 
 /*
@@ -1802,20 +1797,6 @@ uma_zcreate_impl(const char *name, size_t size, uma_ctor ctor, uma_dtor dtor,
 	args.dtor = dtor;
 	args.uminit = uminit;
 	args.fini = fini;
-#ifdef  INVARIANTS
-	/*
-	 * If a zone is being created with an empty constructor and
-	 * destructor, pass UMA constructor/destructor which checks for
-	 * memory use after free.
-	 */
-	if ((!(flags & (UMA_ZONE_ZINIT | UMA_ZONE_NOFREE))) &&
-	    ctor == NULL && dtor == NULL && uminit == NULL && fini == NULL) {
-		args.ctor = trash_ctor;
-		args.dtor = trash_dtor;
-		args.uminit = trash_init;
-		args.fini = trash_fini;
-	}
-#endif
 	args.align = align;
 	args.flags = flags;
 	args.keg = NULL;
@@ -1957,9 +1938,6 @@ zalloc_start:
 			zone_free_item(zone, item, udata, SKIP_DTOR);
 			return (NULL);
 		}
-#ifdef INVARIANTS
-		uma_dbg_alloc(zone, NULL, item);
-#endif
 		if (flags & M_ZERO)
 			uma_zero_item(item, zone);
 		return (item);
@@ -2328,9 +2306,6 @@ zone_alloc_item(uma_zone_t zone, void *udata, int flags)
 			goto fail;
 		}
 	}
-#ifdef INVARIANTS
-	uma_dbg_alloc(zone, NULL, item);
-#endif
 	if (flags & M_ZERO)
 		uma_zero_item(item, zone);
 
@@ -2365,12 +2340,6 @@ uma_zfree_arg(uma_zone_t zone, void *item, void *udata)
 		memguard_free(item);
 		return;
 	}
-#endif
-#ifdef INVARIANTS
-	if (zone->uz_flags & UMA_ZONE_MALLOC)
-		uma_dbg_free(zone, udata, item);
-	else
-		uma_dbg_free(zone, NULL, item);
 #endif
 	if (zone->uz_dtor != NULL)
 		zone->uz_dtor(item, zone->uz_size, udata);
@@ -2592,14 +2561,6 @@ static void
 zone_free_item(uma_zone_t zone, void *item, void *udata, enum zfreeskip skip)
 {
 
-#ifdef INVARIANTS
-	if (skip == SKIP_NONE) {
-		if (zone->uz_flags & UMA_ZONE_MALLOC)
-			uma_dbg_free(zone, udata, item);
-		else
-			uma_dbg_free(zone, NULL, item);
-	}
-#endif
 	if (skip < SKIP_DTOR && zone->uz_dtor)
 		zone->uz_dtor(item, zone->uz_size, udata);
 

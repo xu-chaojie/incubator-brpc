@@ -366,7 +366,7 @@ typedef void (*uma_free)(void *item, vm_size_t size, uint8_t pflag);
 
 
 /*
- * Sets up the uma allocator. (Called by vm_mem_init)
+ * Sets up the uma allocator. 
  *
  * Arguments:
  *
