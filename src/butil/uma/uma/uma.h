@@ -184,52 +184,6 @@ uma_zone_t uma_zcreate(const char *name, size_t size, uma_ctor ctor,
 		    int align, uint32_t flags);
 
 /*
- * Create a secondary uma zone
- *
- * Arguments:
- *	name  The text name of the zone for debugging and stats. This memory
- *		should not be freed until the zone has been deallocated.
- *	ctor  The constructor that is called when the object is allocated.
- *	dtor  The destructor that is called when the object is freed.
- *	zinit  An initializer that sets up the initial state of the memory
- *		as the object passes from the Keg's slab to the Zone's cache.
- *	zfini  A discard function that undoes initialization done by init
- *		as the object passes from the Zone's cache to the Keg's slab.
- *
- *		ctor/dtor/zinit/zfini may all be null, see notes above.
- *		Note that the zinit and zfini specified here are NOT
- *		exactly the same as the init/fini specified to uma_zcreate()
- *		when creating a master zone.  These zinit/zfini are called
- *		on the TRANSITION from keg to zone (and vice-versa). Once
- *		these are set, the primary zone may alter its init/fini
- *		(which are called when the object passes from VM to keg)
- *		using uma_zone_set_init/fini()) as well as its own
- *		zinit/zfini (unset by default for master zone) with
- *		uma_zone_set_zinit/zfini() (note subtle 'z' prefix).
- *
- *	master  A reference to this zone's Master Zone (Primary Zone),
- *		which contains the backing Keg for the Secondary Zone
- *		being added.
- *
- * Returns:
- *	A pointer to a structure which is intended to be opaque to users of
- *	the interface.  The value may be null if the wait flag is not set.
- */
-uma_zone_t uma_zsecond_create(char *name, uma_ctor ctor, uma_dtor dtor,
-		    uma_init zinit, uma_fini zfini, uma_zone_t master);
-
-/*
- * Add a second master to a secondary zone.  This provides multiple data
- * backends for objects with the same size.  Both masters must have
- * compatible allocation flags.  Presently, UMA_ZONE_MALLOC type zones are
- * the only supported.
- *
- * Returns:
- *	Error on failure, 0 on success.
- */
-int uma_zsecond_add(uma_zone_t zone, uma_zone_t master);
-
-/*
  * Create cache-only zones.
  *
  * This allows uma's per-cpu cache facilities to handle arbitrary
@@ -257,7 +211,7 @@ uma_zone_t uma_zcache_create(char *name, int size, uma_ctor ctor, uma_dtor dtor,
 #define UMA_ZONE_MALLOC		0x0010	/* For use by malloc(9) only! */
 #define UMA_ZONE_NOFREE		0x0020	/* Do not free slabs of this type! */
 #define UMA_ZONE_MTXCLASS	0x0040	/* Create a new lock class */
-#define	UMA_ZONE_VM		0x0080	/*
+#define	UMA_ZONE_RESERVED00	0x0080	/*
 					 * Used for internal vm datastructures
 					 * only.
 					 */
@@ -265,7 +219,7 @@ uma_zone_t uma_zcache_create(char *name, int size, uma_ctor ctor, uma_dtor dtor,
 					 * Use a hash table instead of caching
 					 * information in the vm_page.
 					 */
-#define	UMA_ZONE_SECONDARY	0x0200	/* Zone is a Secondary Zone */
+#define	UMA_ZONE_RESERVED01	0x0200	/* Zone is a Secondary Zone */
 #define	UMA_ZONE_NOBUCKET	0x0400	/* Do not use buckets. */
 #define	UMA_ZONE_MAXBUCKET	0x0800	/* Use largest buckets. */
 #define	UMA_ZONE_CACHESPREAD	0x1000	/*
@@ -274,7 +228,7 @@ uma_zone_t uma_zcache_create(char *name, int size, uma_ctor ctor, uma_dtor dtor,
 					 * require many virtually contiguous
 					 * backend pages and can fail early.
 					 */
-#define	UMA_ZONE_VTOSLAB	0x2000	/* Zone uses vtoslab for lookup. */
+#define	UMA_ZONE_RESERVED02	0x2000	/* Zone uses vtoslab for lookup. */
 #define	UMA_ZONE_NODUMP		0x4000	/*
 					 * Zone's pages will not be included in
 					 * mini-dumps.
@@ -292,7 +246,7 @@ uma_zone_t uma_zcache_create(char *name, int size, uma_ctor ctor, uma_dtor dtor,
  */
 #define	UMA_ZONE_INHERIT						\
     (UMA_ZONE_OFFPAGE | UMA_ZONE_MALLOC | UMA_ZONE_NOFREE |		\
-    UMA_ZONE_HASH | UMA_ZONE_VTOSLAB | UMA_ZONE_PCPU)
+    UMA_ZONE_HASH | UMA_ZONE_PCPU)
 
 /* Definitions for align */
 #define UMA_ALIGN_PTR	(sizeof(void *) - 1)	/* Alignment fit for ptr */

@@ -243,7 +243,6 @@ static void bucket_free(uma_zone_t zone, uma_bucket_t, void *);
 static void bucket_zone_drain(void);
 static uma_bucket_t zone_alloc_bucket(uma_zone_t zone, void *, int flags);
 static uma_slab_t zone_fetch_slab(uma_zone_t zone, uma_keg_t last, int flags);
-static uma_slab_t zone_fetch_slab_multi(uma_zone_t zone, uma_keg_t last, int flags);
 static void *slab_alloc_item(uma_keg_t keg, uma_slab_t slab);
 static void slab_free_item(uma_keg_t keg, uma_slab_t slab, void *item);
 static uma_keg_t uma_kcreate(uma_zone_t zone, size_t size, uma_init uminit,
@@ -972,10 +971,6 @@ keg_alloc_slab(uma_keg_t keg, uma_zone_t zone, int wait)
 	if (!(keg->uk_flags & UMA_ZONE_OFFPAGE))
 		slab = (uma_slab_t )(mem + keg->uk_pgoff);
 
-	if (keg->uk_flags & UMA_ZONE_VTOSLAB)
-		for (i = 0; i < keg->uk_ppera; i++)
-			vsetslab((vm_offset_t)mem + (i * PAGE_SIZE), slab);
-
 	slab->us_keg = keg;
 	slab->us_data = mem;
 	slab->us_freecount = keg->uk_ipers;
@@ -1241,8 +1236,7 @@ keg_small_init(uma_keg_t keg)
 		keg->uk_flags |= UMA_ZONE_OFFPAGE;
 	}
 
-	if ((keg->uk_flags & UMA_ZONE_OFFPAGE) &&
-	    (keg->uk_flags & UMA_ZONE_VTOSLAB) == 0)
+	if ((keg->uk_flags & UMA_ZONE_OFFPAGE))
 		keg->uk_flags |= UMA_ZONE_HASH;
 }
 
@@ -1299,8 +1293,7 @@ keg_large_init(uma_keg_t keg)
 		}
 	}
 
-	if ((keg->uk_flags & UMA_ZONE_OFFPAGE) &&
-	    (keg->uk_flags & UMA_ZONE_VTOSLAB) == 0)
+	if ((keg->uk_flags & UMA_ZONE_OFFPAGE))
 		keg->uk_flags |= UMA_ZONE_HASH;
 }
 
@@ -1333,7 +1326,7 @@ keg_cachespread_init(uma_keg_t keg)
 	keg->uk_rsize = rsize;
 	keg->uk_ppera = pages;
 	keg->uk_ipers = ((pages * PAGE_SIZE) + trailer) / rsize;
-	keg->uk_flags |= UMA_ZONE_OFFPAGE | UMA_ZONE_VTOSLAB;
+	keg->uk_flags |= UMA_ZONE_OFFPAGE;
 	KASSERT(keg->uk_ipers <= SLAB_SETSIZE,
 	    ("%s: keg->uk_ipers too high(%d) increase max_ipers", __func__,
 	    keg->uk_ipers));
@@ -1372,14 +1365,8 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 	zone = arg->zone;
 	keg->uk_name = zone->uz_name;
 
-	if (arg->flags & UMA_ZONE_VM)
-		keg->uk_flags |= UMA_ZFLAG_CACHEONLY;
-
 	if (arg->flags & UMA_ZONE_ZINIT)
 		keg->uk_init = zero_init;
-
-	if (arg->flags & UMA_ZONE_MALLOC)
-		keg->uk_flags |= UMA_ZONE_VTOSLAB;
 
 	if (arg->flags & UMA_ZONE_PCPU)
 		keg->uk_flags |= UMA_ZONE_OFFPAGE;
@@ -1474,7 +1461,6 @@ zone_ctor(void *mem, int size, void *udata, int flags)
 {
 	struct uma_zctor_args *arg = udata;
 	uma_zone_t zone = mem;
-	uma_zone_t z;
 	uma_keg_t keg;
 	int cpu, sz;
 
@@ -1505,8 +1491,6 @@ zone_ctor(void *mem, int size, void *udata, int flags)
 	 * This is a pure cache zone, no kegs.
 	 */
 	if (arg->import) {
-		if (arg->flags & UMA_ZONE_VM)
-			arg->flags |= UMA_ZFLAG_CACHEONLY;
 		zone->uz_flags = arg->flags;
 		zone->uz_size = arg->size;
 		zone->uz_import = arg->import;
@@ -1526,23 +1510,7 @@ zone_ctor(void *mem, int size, void *udata, int flags)
 	zone->uz_release = (uma_release)zone_release;
 	zone->uz_arg = zone; 
 
-	if (arg->flags & UMA_ZONE_SECONDARY) {
-		KASSERT(arg->keg != NULL, ("Secondary zone on zero'd keg"));
-		zone->uz_init = arg->uminit;
-		zone->uz_fini = arg->fini;
-		zone->uz_lockptr = &keg->uk_lock;
-		zone->uz_flags |= UMA_ZONE_SECONDARY;
-		uma_rw_wlock(&uma_rwlock);
-		ZONE_LOCK(zone);
-		LIST_FOREACH(z, &keg->uk_zones, uz_link) {
-			if (LIST_NEXT(z, uz_link) == NULL) {
-				LIST_INSERT_AFTER(z, zone, uz_link);
-				break;
-			}
-		}
-		ZONE_UNLOCK(zone);
-		uma_rw_wunlock(&uma_rwlock);
-	} else if (keg == NULL) {
+        if (keg == NULL) {
 		if ((keg = uma_kcreate(zone, arg->size, arg->uminit, arg->fini,
 		    arg->align, arg->flags)) == NULL)
 			return (ENOMEM);
@@ -1578,8 +1546,6 @@ zone_ctor(void *mem, int size, void *udata, int flags)
 	 * caches.  If we're internal, bail out here.
 	 */
 	if (keg->uk_flags & UMA_ZFLAG_INTERNAL) {
-		KASSERT((zone->uz_flags & UMA_ZONE_SECONDARY) == 0,
-		    ("Secondary zone requested UMA_ZFLAG_INTERNAL"));
 		return (0);
 	}
 
@@ -1669,7 +1635,7 @@ zone_dtor(void *arg, int size, void *udata)
 	/*
 	 * We only destroy kegs from non secondary zones.
 	 */
-	if (keg != NULL && (zone->uz_flags & UMA_ZONE_SECONDARY) == 0)  {
+	if (keg != NULL)  {
 		uma_rw_wlock(&uma_rwlock);
 		LIST_REMOVE(keg, uk_link);
 		uma_rw_wunlock(&uma_rwlock);
@@ -1907,41 +1873,6 @@ uma_zcreate(const char *name, size_t size, uma_ctor ctor, uma_dtor dtor,
 
 /* See uma.h */
 uma_zone_t
-uma_zsecond_create(char *name, uma_ctor ctor, uma_dtor dtor,
-		    uma_init zinit, uma_fini zfini, uma_zone_t master)
-{
-	struct uma_zctor_args args;
-	uma_keg_t keg;
-	uma_zone_t res;
-	bool locked;
-
-	keg = zone_first_keg(master);
-	memset(&args, 0, sizeof(args));
-	args.name = name;
-	args.size = keg->uk_size;
-	args.ctor = ctor;
-	args.dtor = dtor;
-	args.uminit = zinit;
-	args.fini = zfini;
-	args.align = keg->uk_align;
-	args.flags = keg->uk_flags | UMA_ZONE_SECONDARY;
-	args.keg = keg;
-
-	if (booted < UMA_STARTUP2) {
-		locked = false;
-	} else {
-		uma_sx_slock(&uma_drain_lock);
-		locked = true;
-	}
-	/* XXX Attaches only one keg of potentially many. */
-	res = zone_alloc_item(zones, &args, M_WAITOK);
-	if (locked)
-		uma_sx_sunlock(&uma_drain_lock);
-	return (res);
-}
-
-/* See uma.h */
-uma_zone_t
 uma_zcache_create(char *name, int size, uma_ctor ctor, uma_dtor dtor,
 		    uma_init zinit, uma_fini zfini, uma_import zimport,
 		    uma_release zrelease, void *arg, int flags)
@@ -1962,84 +1893,6 @@ uma_zcache_create(char *name, int size, uma_ctor ctor, uma_dtor dtor,
 	args.flags = flags;
 
 	return (zone_alloc_item(zones, &args, M_WAITOK));
-}
-
-static void
-zone_lock_pair(uma_zone_t a, uma_zone_t b)
-{
-	if (a < b) {
-		ZONE_LOCK(a);
-		uma_mtx_lock_flags(b->uz_lockptr, MTX_DUPOK);
-	} else {
-		ZONE_LOCK(b);
-		uma_mtx_lock_flags(a->uz_lockptr, MTX_DUPOK);
-	}
-}
-
-static void
-zone_unlock_pair(uma_zone_t a, uma_zone_t b)
-{
-
-	ZONE_UNLOCK(a);
-	ZONE_UNLOCK(b);
-}
-
-int
-uma_zsecond_add(uma_zone_t zone, uma_zone_t master)
-{
-	uma_klink_t klink;
-	uma_klink_t kl;
-	int error;
-
-	error = 0;
-	klink = malloc(sizeof(*klink));
-
-	zone_lock_pair(zone, master);
-	/*
-	 * zone must use vtoslab() to resolve objects and must already be
-	 * a secondary.
-	 */
-	if ((zone->uz_flags & (UMA_ZONE_VTOSLAB | UMA_ZONE_SECONDARY))
-	    != (UMA_ZONE_VTOSLAB | UMA_ZONE_SECONDARY)) {
-		error = EINVAL;
-		goto out;
-	}
-	/*
-	 * The new master must also use vtoslab().
-	 */
-	if ((zone->uz_flags & UMA_ZONE_VTOSLAB) != UMA_ZONE_VTOSLAB) {
-		error = EINVAL;
-		goto out;
-	}
-
-	/*
-	 * The underlying object must be the same size.  rsize
-	 * may be different.
-	 */
-	if (master->uz_size != zone->uz_size) {
-		error = E2BIG;
-		goto out;
-	}
-	/*
-	 * Put it at the end of the list.
-	 */
-	klink->kl_keg = zone_first_keg(master);
-	LIST_FOREACH(kl, &zone->uz_kegs, kl_link) {
-		if (LIST_NEXT(kl, kl_link) == NULL) {
-			LIST_INSERT_AFTER(kl, klink, kl_link);
-			break;
-		}
-	}
-	klink = NULL;
-	zone->uz_flags |= UMA_ZFLAG_MULTI;
-	zone->uz_slab = zone_fetch_slab_multi;
-
-out:
-	zone_unlock_pair(zone, master);
-	if (klink != NULL)
-		free(klink);
-
-	return (error);
 }
 
 /* See uma.h */
@@ -2354,86 +2207,6 @@ zone_fetch_slab(uma_zone_t zone, uma_keg_t keg, int flags)
 			break;
 	}
 	KEG_UNLOCK(keg);
-	return (NULL);
-}
-
-/*
- * uma_zone_fetch_slab_multi:  Fetches a slab from one available keg.  Returns
- * with the keg locked.  On NULL no lock is held.
- *
- * The last pointer is used to seed the search.  It is not required.
- */
-static uma_slab_t
-zone_fetch_slab_multi(uma_zone_t zone, uma_keg_t last, int rflags)
-{
-	uma_klink_t klink;
-	uma_slab_t slab;
-	uma_keg_t keg;
-	int flags;
-	int empty;
-	int full;
-
-	/*
-	 * Don't wait on the first pass.  This will skip limit tests
-	 * as well.  We don't want to block if we can find a provider
-	 * without blocking.
-	 */
-	flags = (rflags & ~M_WAITOK) | M_NOWAIT;
-	/*
-	 * Use the last slab allocated as a hint for where to start
-	 * the search.
-	 */
-	if (last != NULL) {
-		slab = keg_fetch_slab(last, zone, flags);
-		if (slab)
-			return (slab);
-		KEG_UNLOCK(last);
-	}
-	/*
-	 * Loop until we have a slab incase of transient failures
-	 * while M_WAITOK is specified.  I'm not sure this is 100%
-	 * required but we've done it for so long now.
-	 */
-	for (;;) {
-		empty = 0;
-		full = 0;
-		/*
-		 * Search the available kegs for slabs.  Be careful to hold the
-		 * correct lock while calling into the keg layer.
-		 */
-		LIST_FOREACH(klink, &zone->uz_kegs, kl_link) {
-			keg = klink->kl_keg;
-			KEG_LOCK(keg);
-			if ((keg->uk_flags & UMA_ZFLAG_FULL) == 0) {
-				slab = keg_fetch_slab(keg, zone, flags);
-				if (slab)
-					return (slab);
-			}
-			if (keg->uk_flags & UMA_ZFLAG_FULL)
-				full++;
-			else
-				empty++;
-			KEG_UNLOCK(keg);
-		}
-		if (rflags & (M_NOWAIT | M_NOVM))
-			break;
-		flags = rflags;
-		/*
-		 * All kegs are full.  XXX We can't atomically check all kegs
-		 * and sleep so just sleep for a short period and retry.
-		 */
-		if (full && !empty) {
-			ZONE_LOCK(zone);
-			zone->uz_flags |= UMA_ZFLAG_FULL;
-			zone->uz_sleeps++;
-			zone_log_warning(zone);
-			zone_maxaction(zone);
-			uma_mtx_sleep(&zone->uz_cond, zone->uz_lockptr);
-			zone->uz_flags &= ~UMA_ZFLAG_FULL;
-			ZONE_UNLOCK(zone);
-			continue;
-		}
-	}
 	return (NULL);
 }
 
@@ -2801,22 +2574,12 @@ zone_release(uma_zone_t zone, void **bucket, int cnt)
 	KEG_LOCK(keg);
 	for (i = 0; i < cnt; i++) {
 		item = bucket[i];
-		if (!(zone->uz_flags & UMA_ZONE_VTOSLAB)) {
-			mem = (uint8_t *)((uintptr_t)item & (~UMA_SLAB_MASK));
-			if (zone->uz_flags & UMA_ZONE_HASH) {
-				slab = hash_sfind(&keg->uk_hash, mem);
-			} else {
-				mem += keg->uk_pgoff;
-				slab = (uma_slab_t)mem;
-			}
+		mem = (uint8_t *)((uintptr_t)item & (~UMA_SLAB_MASK));
+		if (zone->uz_flags & UMA_ZONE_HASH) {
+			slab = hash_sfind(&keg->uk_hash, mem);
 		} else {
-			uma_panic("UMA_ZONE_VTOSLAB should not be set");
-//			slab = vtoslab((vm_offset_t)item);
-//			if (slab->us_keg != keg) {
-//				KEG_UNLOCK(keg);
-//				keg = slab->us_keg;
-//				KEG_LOCK(keg);
-//			}
+			mem += keg->uk_pgoff;
+			slab = (uma_slab_t)mem;
 		}
 		slab_free_item(keg, slab, item);
 		if (keg->uk_flags & UMA_ZFLAG_FULL) {
