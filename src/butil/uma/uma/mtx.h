@@ -34,14 +34,9 @@
 #define	MTX_QUIET	0x080
 #define	MTX_DUPOK	0x100
 
-#define MTX_DEBUG
 struct mtx {
 	pthread_mutex_t	mtx_lock;
 	pthread_t       mtx_owner;
-#ifdef MTX_DEBUG
-	const char *	mtx_file;
-	int		mtx_line;
-#endif
 };
 
 #define MA_OWNED	0
@@ -49,20 +44,14 @@ struct mtx {
 #define MA_RECURSED	3
 #define MA_NOTRECURSED	4
 
-void mtx_init(struct mtx *m, const char *name, const char *type, int opts);
-void mtx_destroy(struct mtx *m);
-int  mtx_trylock(struct mtx *m);
-#define mtx_trylock(m) \
-	mtx_trylock_impl(m, __FILE__,  __LINE__)
-int  mtx_trylock_impl(struct mtx *m, const char *file, int line);
-#define mtx_lock(m) \
-	mtx_lock_impl(m, __FILE__, __LINE__)
+void uma_mtx_init(struct mtx *m, const char *name, const char *type, int opts);
+void uma_mtx_destroy(struct mtx *m);
+int  uma_mtx_trylock(struct mtx *m);
+void uma_mtx_lock(struct mtx *m);
 
-void mtx_lock_impl(struct mtx *m, const char *file, int line);
+#define uma_mtx_lock_flags(m, f) uma_mtx_lock(m)
 
-#define mtx_lock_flags(m, f) mtx_lock(m)
-
-void mtx_unlock(struct mtx *m);
-void mtx_assert(struct mtx *m, int); 
-void mtx_sleep(pthread_cond_t *cond, struct mtx *m);
+void uma_mtx_unlock(struct mtx *m);
+void uma_mtx_assert(struct mtx *m, int); 
+void uma_mtx_sleep(pthread_cond_t *cond, struct mtx *m);
 #endif /* !UMA_MUTEX_H */

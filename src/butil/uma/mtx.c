@@ -21,58 +21,66 @@
 #include "uma/systm.h"
 #include "uma/mtx.h"
 
+#include <errno.h>
+#include <pthread.h>
+#include <string.h>
+
 #define INVALID_PTHREAD 0
 
-void mtx_init(struct mtx *m, const char *name, const char *type, int opts)
+void uma_mtx_init(struct mtx *m, const char *name, const char *type, int opts)
 {
 	pthread_mutexattr_t attr;
 
 	pthread_mutexattr_init(&attr);
-//	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ADAPTIVE_NP);
+	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
 	pthread_mutex_init(&m->mtx_lock, &attr);
 	pthread_mutexattr_destroy(&attr);
 	m->mtx_owner = INVALID_PTHREAD;
-#ifdef MTX_DEBUG
-	m->mtx_file = "";
-	m->mtx_line = 0;
-#endif
 }
 
-int mtx_trylock_impl(struct mtx *m, const char *file, int line)
+void uma_mtx_destroy(struct mtx *m)
 {
-	if (pthread_mutex_trylock(&m->mtx_lock) == 0) {
+	m->mtx_owner = INVALID_PTHREAD;
+	pthread_mutex_destroy(&m->mtx_lock);
+}
+
+int uma_mtx_trylock(struct mtx *m)
+{
+	int err;
+
+	if ((err = pthread_mutex_trylock(&m->mtx_lock)) == 0) {
 		m->mtx_owner = pthread_self();
-#ifdef MTX_DEBUG
-		m->mtx_file = file;
-		m->mtx_line = line;
-#endif
 		return 1;
+	} else if (__predict_false(err != EBUSY)) {
+		uma_panic("pthread_mutex_trylock failed (%s)", strerror(err));
 	}
 
 	return 0;
 }
 
-void mtx_lock_impl(struct mtx *m, const char *file, int line)
+void uma_mtx_lock(struct mtx *m)
 {
-	pthread_mutex_lock(&m->mtx_lock);
-	m->mtx_owner = pthread_self();
-#ifdef MTX_DEBUG
-	m->mtx_file = file;
-	m->mtx_line = line;
-#endif
+	int err;
+
+	err = pthread_mutex_lock(&m->mtx_lock);
+	if (__predict_true(err == 0)) {
+		m->mtx_owner = pthread_self();
+	} else {
+		uma_panic("pthread_mutex_lock failed (%s)", strerror(err));
+	}
 }
 
-void mtx_unlock(struct mtx *m)
+void uma_mtx_unlock(struct mtx *m)
 {
+	int err;
+
 	m->mtx_owner = INVALID_PTHREAD;
-#ifdef MTX_DEBUG
-	m->mtx_file = "";
-	m->mtx_line = 0;
-#endif
-	pthread_mutex_unlock(&m->mtx_lock);
+	if (__predict_false((err = pthread_mutex_unlock(&m->mtx_lock)) != 0)) {
+		uma_panic("pthread_mutex_unlock failed (%s)", strerror(err));
+	}
 }
 
-void mtx_assert(struct mtx *m, int ma)
+void uma_mtx_assert(struct mtx *m, int ma)
 {
 	if (ma & MA_OWNED) {
 		KASSERT(m->mtx_owner == pthread_self(), ("mtx not owned"));
@@ -83,18 +91,13 @@ void mtx_assert(struct mtx *m, int ma)
 	}
 }
 
-void mtx_sleep(pthread_cond_t *cond, struct mtx *m)
+void uma_mtx_sleep(pthread_cond_t *cond, struct mtx *m)
 {
-#ifdef MTX_DEBUG
-	const char *saved_file = m->mtx_file;
-	int saved_line = m->mtx_line;
-#endif
+	if (__predict_false(m->mtx_owner != pthread_self())) {
+		uma_panic("uma_mtx_sleep not owned mutex");
+	}
 	m->mtx_owner = INVALID_PTHREAD;
 	pthread_cond_wait(cond, &m->mtx_lock);
 	m->mtx_owner = pthread_self();
-#ifdef MTX_DEBUG
-	m->mtx_file = saved_file;
-	m->mtx_line = saved_line;
-#endif
 }
 

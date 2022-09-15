@@ -29,5 +29,8 @@
 #define __cache_aligned __aligned(CACHE_LINE_SIZE)
 #define __exclusive_cache_line
 
+#define __predict_true(exp)     __builtin_expect((exp), 1)
+#define __predict_false(exp)    __builtin_expect((exp), 0)
+
 #endif
 
