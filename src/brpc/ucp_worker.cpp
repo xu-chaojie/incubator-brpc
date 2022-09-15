@@ -346,6 +346,7 @@ void UcpWorker::DoRunWorker()
     struct timeval tv_start{0,0}, tv_end{0,0}, tv_int{0,0}, tv_now{0,0};
     int count = 0;
 
+    pthread_setname_np(pthread_self(), "ucp_worker");
     tv_int.tv_sec = 0;
     tv_int.tv_usec = FLAGS_brpc_ucp_worker_poll_time;
     while (status_ != STOPPING) {

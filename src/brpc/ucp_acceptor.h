@@ -99,7 +99,7 @@ private:
     int idle_timeout_sec_;
 
     // Acceptor bthread
-    bthread_t acceptor_tid_;
+    pthread_t acceptor_tid_;
     bthread_t close_idle_tid_;
 
     bthread::Mutex map_mutex_;

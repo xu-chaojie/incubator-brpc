@@ -26,6 +26,7 @@
 #include "bthread/unstable.h"
 #include "ucs/sys/sock.h"
 
+#include <poll.h>
 #include <string.h>    /* memset */
 #include <arpa/inet.h> /* inet_addr */
 
@@ -88,7 +89,7 @@ void UcpAcceptor::StopAccept(int /*closewait_ms*/) {
                        << ucs_status_string(stat) << ")";
         }
         map_mutex_.unlock();
-        bthread_join(acceptor_tid_, NULL);
+        pthread_join(acceptor_tid_, NULL);
         map_mutex_.lock();
 
         ucp_listener_destroy(ucp_listener_);
@@ -302,8 +303,8 @@ int UcpAcceptor::StartAccept(const butil::EndPoint &endpoint,
     ucp_worker_ = worker;
     ucp_listener_ = listener; 
     event_fd_ = efd;
-    if (bthread_start_background(&acceptor_tid_, NULL,
-                                 AcceptConnections, this) != 0) {
+    if (pthread_create(&acceptor_tid_, NULL,
+                       AcceptConnections, this) != 0) {
         bthread_stop(close_idle_tid_);
         bthread_join(close_idle_tid_, NULL);
         close_idle_tid_ = INVALID_BTHREAD;
@@ -341,10 +342,19 @@ void* UcpAcceptor::AcceptConnections(void *arg)
 
 void UcpAcceptor::AcceptorLoop()
 {
+    struct pollfd poll_info;
+
+    pthread_setname_np(pthread_self(), "ucp_acceptor");
+
     map_mutex_.lock();
     while (status_ != STOPPING) {
         map_mutex_.unlock();
-        bthread_fd_wait(event_fd_, EPOLLIN);
+
+        poll_info.fd = event_fd_;
+        poll_info.events = EPOLLIN;
+        poll_info.revents = 0;
+        poll(&poll_info, 1, -1);
+
         map_mutex_.lock();
 again:
         while (ucp_worker_progress(ucp_worker_))
