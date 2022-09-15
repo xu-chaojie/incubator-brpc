@@ -157,7 +157,7 @@ struct uma_hash {
  * align field or structure to cache line
  */
 #if defined(__amd64__)
-#define UMA_ALIGN	__aligned(CACHE_LINE_SIZE)
+#define UMA_ALIGN	__aligned(UMA_CACHE_LINE_SIZE)
 #else
 #define UMA_ALIGN
 #endif

@@ -23,10 +23,10 @@
 
 #include <stddef.h> 
 
-#define	CACHE_LINE_SIZE		64
+#define	UMA_CACHE_LINE_SIZE		64
 
 #define __aligned(x)    __attribute__((__aligned__(x)))
-#define __cache_aligned __aligned(CACHE_LINE_SIZE)
+#define __cache_aligned __aligned(UMA_CACHE_LINE_SIZE)
 #define __exclusive_cache_line
 
 #define __predict_true(exp)     __builtin_expect((exp), 1)

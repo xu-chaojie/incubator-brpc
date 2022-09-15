@@ -206,7 +206,6 @@ enum zfreeskip { SKIP_NONE = 0, SKIP_DTOR, SKIP_FINI };
 
 /* Prototypes.. */
 
-static void *noobj_alloc(uma_zone_t, vm_size_t, uint8_t *, int);
 static void *page_alloc(uma_zone_t, vm_size_t, uint8_t *, int);
 static void *startup_alloc(uma_zone_t, vm_size_t, uint8_t *, int);
 static void page_free(void *, vm_size_t, uint8_t);
@@ -1036,31 +1035,6 @@ page_alloc(uma_zone_t zone, vm_size_t bytes, uint8_t *pflag, int wait)
 		map_flags |= MAP_HUGETLB;
 	}
 	return uma_mmap(map_flags, bytes);
-}
-
-/*
- * Allocates a number of pages from within an object
- *
- * Arguments:
- *	bytes  The number of bytes requested
- *	wait   Shall we wait?
- *
- * Returns:
- *	A pointer to the alloced memory or possibly
- *	NULL if M_NOWAIT is set.
- */
-static void *
-noobj_alloc(uma_zone_t zone, vm_size_t bytes, uint8_t *flags, int wait)
-{
-	vm_offset_t retkva, zkva;
-	uma_keg_t keg;
-
-	keg = zone_first_keg(zone);  
-	*flags = UMA_SLAB_PRIV;
-	zkva = keg->uk_kva +
-	    atomic_fetchadd_long(&keg->uk_offset, roundup(bytes, PAGE_SIZE));
-	retkva = zkva;
-	return ((void *)retkva);
 }
 
 /*
@@ -2746,39 +2720,6 @@ uma_zone_reserve(uma_zone_t zone, int items)
 
 	return;
 }
-
-/* See uma.h */
-int
-uma_zone_reserve_kva(uma_zone_t zone, int count)
-{
-	uma_keg_t keg;
-	vm_offset_t kva;
-	u_int pages;
-
-	keg = zone_first_keg(zone);
-	if (keg == NULL)
-		return (0);
-	pages = count / keg->uk_ipers;
-
-	if ((int)pages * keg->uk_ipers < count)
-		pages++;
-	pages *= keg->uk_ppera;
-
-	kva = (vm_offset_t)uma_mmap(0, (vm_size_t)pages * PAGE_SIZE);
-	if (kva == 0)
-		return (0);
-
-	KEG_LOCK(keg);
-	keg->uk_kva = kva;
-	keg->uk_offset = 0;
-	keg->uk_maxpages = pages;
-	keg->uk_allocf = noobj_alloc;
-	keg->uk_flags |= UMA_ZONE_NOFREE;
-	KEG_UNLOCK(keg);
-
-	return (1);
-}
-
 
 /* See uma.h */
 void

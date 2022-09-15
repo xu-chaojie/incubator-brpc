@@ -409,25 +409,6 @@ void uma_set_align(int align);
 void uma_zone_reserve(uma_zone_t zone, int nitems);
 
 /*
- * Reserves the maximum KVA space required by the zone and configures the zone
- * to use a VM_ALLOC_NOOBJ-based backend allocator.
- *
- * Arguments:
- *	zone  The zone to update.
- *	nitems  The upper limit on the number of items that can be allocated.
- *
- * Returns:
- *	0  if KVA space can not be allocated
- *	1  if successful
- *
- * Discussion:
- *	When the machine supports a direct map and the zone's items are smaller
- *	than a page, the zone will use the direct map instead of allocating KVA
- *	space.
- */
-int uma_zone_reserve_kva(uma_zone_t zone, int nitems);
-
-/*
  * Sets a high limit on the number of items allowed in a zone
  *
  * Arguments:
@@ -578,12 +559,6 @@ int uma_zone_exhausted(uma_zone_t zone);
 int uma_zone_exhausted_nolock(uma_zone_t zone);
 
 void uma_shutdown(void);
-
-/*
- * Common UMA_ZONE_PCPU zones.
- */
-extern uma_zone_t pcpu_zone_64;
-extern uma_zone_t pcpu_zone_ptr;
 
 /*
  * Exported statistics structures to be used by user space monitoring tools.
