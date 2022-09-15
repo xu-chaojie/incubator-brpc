@@ -22,12 +22,10 @@
 #define UMA_TYPES_H
 
 #include <sys/types.h>
+#include <stddef.h>
 #include <stdint.h>
 
 typedef uintptr_t vm_size_t;
 typedef uintptr_t vm_offset_t;
-
-#undef __size_t
-#define __size_t  size_t 
 
 #endif
