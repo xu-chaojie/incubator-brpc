@@ -85,6 +85,7 @@ int uma_normal_ppera = SIZE_64KB / PAGE_SIZE;
 #define UMA_DEBUG_ALLOC_1 1
 */
 
+static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 static pthread_t uma_timeout_td;
 
 /*
@@ -244,6 +245,13 @@ static int zone_import(uma_zone_t zone, void **bucket, int max, int flags);
 static void zone_release(uma_zone_t zone, void **bucket, int cnt);
 static void uma_zero_item(void *item, uma_zone_t zone);
 static void uma_startup2(void);
+static uma_zone_t uma_zcreate_impl(const char *name, size_t size,
+    uma_ctor ctor, uma_dtor dtor, uma_init uminit, uma_fini fini, int align,
+    uint32_t flags);
+static uma_zone_t uma_zcache_create_impl(char *name, int size,
+    uma_ctor ctor, uma_dtor dtor, uma_init zinit, uma_fini zfini,
+    uma_import zimport, uma_release zrelease, void *arg, int flags);
+static void uma_startup_impl(void);
 
 void uma_print_zone(uma_zone_t);
 void uma_print_stats(void);
@@ -294,7 +302,7 @@ bucket_init(void)
 	for (ubz = &bucket_zones[0]; ubz->ubz_entries != 0; ubz++) {
 		size = roundup(sizeof(struct uma_bucket), sizeof(void *));
 		size += sizeof(void *) * ubz->ubz_entries;
-		ubz->ubz_zone = uma_zcreate(ubz->ubz_name, size,
+		ubz->ubz_zone = uma_zcreate_impl(ubz->ubz_name, size,
 		    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR,
 		    UMA_ZONE_MTXCLASS | UMA_ZFLAG_BUCKET);
 	}
@@ -1637,6 +1645,12 @@ zone_foreach(void (*zfunc)(uma_zone_t))
 void
 uma_startup(void)
 {
+	pthread_once(&init_once, uma_startup_impl);
+}
+
+static void
+uma_startup_impl(void)
+{
 	struct uma_zctor_args args;
 
 #ifdef UMA_DEBUG
@@ -1679,12 +1693,12 @@ uma_startup(void)
 #endif
 
 	/* Now make a zone for slab headers */
-	slabzone = uma_zcreate("UMA Slabs",
+	slabzone = uma_zcreate_impl("UMA Slabs",
 				sizeof(struct uma_slab),
 				NULL, NULL, NULL, NULL,
 				UMA_ALIGN_PTR, UMA_ZFLAG_INTERNAL);
 
-	hashzone = uma_zcreate("UMA Hash",
+	hashzone = uma_zcreate_impl("UMA Hash",
 	    sizeof(struct slabhead *) * UMA_HASH_SIZE_INIT,
 	    NULL, NULL, NULL, NULL,
 	    UMA_ALIGN_PTR, UMA_ZFLAG_INTERNAL);
@@ -1762,6 +1776,15 @@ uma_set_align(int align)
 uma_zone_t
 uma_zcreate(const char *name, size_t size, uma_ctor ctor, uma_dtor dtor,
 		uma_init uminit, uma_fini fini, int align, uint32_t flags)
+{
+	uma_startup();
+	return uma_zcreate_impl(name, size, ctor, dtor, uminit, fini,
+			align, flags);
+}
+
+static uma_zone_t
+uma_zcreate_impl(const char *name, size_t size, uma_ctor ctor, uma_dtor dtor,
+		uma_init uminit, uma_fini fini, int align, uint32_t flags)
 
 {
 	struct uma_zctor_args args;
@@ -1812,6 +1835,16 @@ uma_zcreate(const char *name, size_t size, uma_ctor ctor, uma_dtor dtor,
 /* See uma.h */
 uma_zone_t
 uma_zcache_create(char *name, int size, uma_ctor ctor, uma_dtor dtor,
+		    uma_init zinit, uma_fini zfini, uma_import zimport,
+		    uma_release zrelease, void *arg, int flags)
+{
+	uma_startup();
+	return uma_zcache_create_impl(name, size, ctor, dtor,
+		    zinit, zfini, zimport, zrelease, arg, flags);
+}
+
+static uma_zone_t
+uma_zcache_create_impl(char *name, int size, uma_ctor ctor, uma_dtor dtor,
 		    uma_init zinit, uma_fini zfini, uma_import zimport,
 		    uma_release zrelease, void *arg, int flags)
 {

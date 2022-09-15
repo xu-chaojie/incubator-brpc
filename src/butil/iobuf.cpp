@@ -45,7 +45,6 @@ static pthread_once_t uma_start_once = PTHREAD_ONCE_INIT;
 static uma_zone_t iobuf_zone;
 static void do_start_uma()
 {
-    uma_startup();
     iobuf_zone = uma_zcreate("iobuf", IOBuf::DEFAULT_BLOCK_SIZE,
          NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, UMA_ZONE_LARGE_KEG);
     int max_item = uma_zone_set_max(iobuf_zone, FLAGS_butil_iobuf_max);
