@@ -283,6 +283,9 @@ struct GenericStringRef {
     GenericStringRef(const CharType (&str)[N]) RAPIDJSON_NOEXCEPT
         : s(str), length(N-1) {}
 
+    GenericStringRef(const GenericStringRef &rhs)
+        : s(rhs.s), length(rhs.length) {}
+
     //! Explicitly create string reference from \c const character pointer
     /*!
         This constructor can be used to \b explicitly  create a reference to
@@ -1657,7 +1660,8 @@ private:
         flags_ = kArrayFlag;
         if (count) {
             data_.a.elements = (GenericValue*)allocator.Malloc(count * sizeof(GenericValue));
-            std::memcpy(data_.a.elements, values, count * sizeof(GenericValue));
+            for (SizeType i = 0; i < count; ++i)
+                data_.a.elements[i] = values[i];
         }
         else
             data_.a.elements = NULL;
@@ -1669,7 +1673,8 @@ private:
         flags_ = kObjectFlag;
         if (count) {
             data_.o.members = (Member*)allocator.Malloc(count * sizeof(Member));
-            std::memcpy(data_.o.members, members, count * sizeof(Member));
+            for (SizeType i = 0; i < count; ++i)
+                data_.o.members[i] = members[i];
         }
         else
             data_.o.members = NULL;

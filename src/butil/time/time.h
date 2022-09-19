@@ -71,6 +71,10 @@ class BUTIL_EXPORT TimeDelta {
   TimeDelta() : delta_(0) {
   }
 
+  TimeDelta(const TimeDelta& other) {
+    delta_ = other.delta_;
+  }
+
   // Converts units of time to TimeDeltas.
   static TimeDelta FromDays(int days);
   static TimeDelta FromHours(int hours);
@@ -267,6 +271,10 @@ class BUTIL_EXPORT Time {
 
   // Contains the NULL time. Use Time::Now() to get the current time.
   Time() : us_(0) {
+  }
+
+  Time(const Time& other) {
+    us_ = other.us_;
   }
 
   // Returns true if the time object has not been initialized.
@@ -606,6 +614,10 @@ class BUTIL_EXPORT TimeTicks {
 #endif
 
   TimeTicks() : ticks_(0) {
+  }
+
+  TimeTicks(const TimeTicks& other) {
+    ticks_ = other.ticks_;
   }
 
   // Platform-dependent tick count representing "right now."
