@@ -1323,7 +1323,18 @@ int IOBuf::appendv(const const_iovec* vec, size_t n) {
 }
 
 int IOBuf::append_user_data(void* data, size_t size, UserDataDeleter deleter) {
-    return append_user_data(data, size, (UserDataDeleter2)deleter, NULL);
+    union {
+        UserDataDeleter one_arg_deleter;
+        UserDataDeleter2 two_arg_deleter;
+    };
+
+    one_arg_deleter = deleter;
+    return append_user_data(data, size, two_arg_deleter, NULL);
+}
+
+static void free_wrapper(void *mem, void *arg)
+{
+    ::free(mem);
 }
 
 int IOBuf::append_user_data(void* data, size_t size, UserDataDeleter2 deleter, void *arg) {
@@ -1336,7 +1347,7 @@ int IOBuf::append_user_data(void* data, size_t size, UserDataDeleter2 deleter, v
         return -1;
     }
     if (deleter == NULL) {
-        deleter = (UserDataDeleter2) &::free;
+        deleter = (UserDataDeleter2) &free_wrapper;
     }
     IOBuf::Block* b = new (mem) IOBuf::Block((char*)data, size, deleter, arg);
     const IOBuf::BlockRef r = { 0, b->cap, b };
