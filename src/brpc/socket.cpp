@@ -1848,7 +1848,6 @@ ssize_t Socket::DoWrite(WriteRequest* req) {
     if (ssl_state() == SSL_OFF) {
         // Write IOBuf in the batch array into the fd.
         if (_conn) {
-            LOG(FATAL) << "has _conn!!!";
             return _conn->CutMessageIntoFileDescriptor(fd(), data_list, ndata);
         } else {
             ssize_t nw;
