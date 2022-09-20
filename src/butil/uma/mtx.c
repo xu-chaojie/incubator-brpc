@@ -25,8 +25,6 @@
 #include <pthread.h>
 #include <string.h>
 
-#define INVALID_PTHREAD 0
-
 void uma_mtx_init(struct mtx *m, const char *name, const char *type, int opts)
 {
 	pthread_mutexattr_t attr;

@@ -21,6 +21,8 @@
 #ifndef UMA_SYSTM_H
 #define UMA_SYSTM_H
 
+#define INVALID_PTHREAD 0
+
 #ifdef INVARIANTS
 #define KASSERT(cond, msg)	\
 	do {			\

@@ -21,8 +21,6 @@
 #include "uma/systm.h"
 #include "uma/sx.h"
 
-#define INVALID_PTHREAD 0
-
 void uma_sx_init(struct sx *sx, const char *name)
 {
 	sx->sx_xowner = INVALID_PTHREAD;
