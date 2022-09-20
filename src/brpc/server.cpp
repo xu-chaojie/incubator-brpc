@@ -464,7 +464,7 @@ int Server::AddBuiltinServices() {
         return -1;
     }
     if (AddBuiltinService(new (std::nothrow) HotspotsService)) {
-         LOG(ERROR) << "Fail to add HotspotsService";
+        LOG(ERROR) << "Fail to add HotspotsService";
         return -1;
     }
     if (AddBuiltinService(new (std::nothrow) IndexService)) {
