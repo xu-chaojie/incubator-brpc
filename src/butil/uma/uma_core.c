@@ -218,6 +218,7 @@ static void keg_dtor(void *, int, void *);
 static int zone_ctor(void *, int, void *, int);
 static void zone_dtor(void *, int, void *);
 static int zero_init(void *, int, int);
+static void zone_drain(uma_zone_t);
 static void keg_small_init(uma_keg_t keg);
 static void keg_large_init(uma_keg_t keg);
 static void zone_foreach(void (*zfunc)(uma_zone_t));
@@ -2824,6 +2825,11 @@ int
 uma_zone_exhausted_nolock(uma_zone_t zone)
 {
 	return (zone->uz_flags & UMA_ZFLAG_FULL);
+}
+
+void uma_zone_drain(uma_zone_t zone)
+{
+    zone_drain(zone);
 }
 
 static void
