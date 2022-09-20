@@ -822,7 +822,9 @@ void UcpWorker::Release(UcpConnectionRef conn)
      * UCP_EP_CLOSE_MODE_FORCE, as it requires both sides to use
      * UCP_ERR_HANDLING_MODE_PEER
      */
-    int mode = UCP_EP_CLOSE_MODE_FLUSH;
+    ucs_status_t code = conn->ucp_code_.load(std::memory_order_relaxed);
+    int mode = (code == UCS_ERR_CONNECTION_RESET) ?
+        UCP_EP_CLOSE_MODE_FORCE : UCP_EP_CLOSE_MODE_FLUSH;
     request = ucp_ep_close_nb(ep, mode);
     if (request == NULL) {
         conn->ep_ = NULL;
