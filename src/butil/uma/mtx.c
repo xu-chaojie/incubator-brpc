@@ -32,7 +32,7 @@ void uma_mtx_init(struct mtx *m, const char *name, const char *type, int opts)
 	pthread_mutexattr_t attr;
 
 	pthread_mutexattr_init(&attr);
-#ifdef MTX_DEBUG
+#ifdef UMA_MTX_DEBUG
 	pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
 #endif
 	pthread_mutex_init(&m->mtx_lock, &attr);
