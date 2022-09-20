@@ -127,7 +127,8 @@ public:
             // We fetch_add nblock in add_block() before setting the entry,
             // thus address_resource() may sees the unset entry. Initialize
             // all entries to NULL makes such address_resource() return NULL.
-            memset(blocks, 0, sizeof(butil::atomic<Block*>) * RP_GROUP_NBLOCK);
+            for (size_t i = 0; i < RP_GROUP_NBLOCK; ++i)
+                blocks[i].store(NULL, butil::memory_order_relaxed);
         }
     };
 

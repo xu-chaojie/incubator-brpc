@@ -198,7 +198,7 @@ bool PrometheusMetricsDumper::DumpStatusJsonString(
         name + std::string("{");
 
     // 遍历json并打印
-    int count = 0;
+    butil::rapidjson::SizeType count = 0;
     BUTIL_RAPIDJSON_NAMESPACE::Value::MemberIterator it = d.MemberBegin();
     while (it != d.MemberEnd()) {
         count++;

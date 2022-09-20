@@ -94,6 +94,21 @@ struct DivideOnAddition<Vector<T,N>, Op, typename butil::enable_if<
     }
 };
 
+template<typename T, bool B>
+struct ConstructArrayHelper {
+    template <size_t N>
+    static void fill(T (&array)[N]) {
+    }
+};
+
+template<typename T>
+struct ConstructArrayHelper<T, true> {
+    template <size_t N>
+    static void fill(T (&array)[N]) {
+        memset(array, 0, sizeof(array));
+    }
+};
+
 template <typename T, typename Op>
 class SeriesBase {
 public:
@@ -123,11 +138,8 @@ private:
     struct Data {
     public:
         Data() {
-            // is_pod does not work for gcc 3.4
-            if (butil::is_integral<T>::value ||
-                butil::is_floating_point<T>::value) {
-                memset(_array, 0, sizeof(_array));
-            }
+            ConstructArrayHelper<T, butil::is_integral<T>::value ||
+                butil::is_floating_point<T>::value>::fill(_array);
         }
         
         T& second(int index) { return _array[index]; }

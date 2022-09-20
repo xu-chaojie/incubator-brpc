@@ -46,7 +46,8 @@ class LazyArray {
 
 public:
     LazyArray() {
-        memset(_blocks, 0, sizeof(butil::atomic<Block*>) * NBLOCK);
+        for (size_t i = 0; i < NBLOCK; ++i)
+            _blocks[i].store(NULL, butil::memory_order_relaxed);
     }
 
     butil::atomic<T>* get_or_new(size_t index) {
