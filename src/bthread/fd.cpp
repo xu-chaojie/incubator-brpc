@@ -47,7 +47,7 @@ class LazyArray {
 public:
     LazyArray() {
         for (size_t i = 0; i < NBLOCK; ++i)
-            _blocks[i].store(0, butil::memory_order_relaxed);
+            _blocks[i].store(NULL, butil::memory_order_relaxed);
     }
 
     butil::atomic<T>* get_or_new(size_t index) {
