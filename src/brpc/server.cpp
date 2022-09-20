@@ -61,7 +61,7 @@
 #include "brpc/builtin/vars_service.h"         // VarsService
 #include "brpc/builtin/rpcz_service.h"         // RpczService
 #include "brpc/builtin/dir_service.h"          // DirService
-//#include "brpc/builtin/pprof_service.h"        // PProfService
+#include "brpc/builtin/pprof_service.h"        // PProfService
 #include "brpc/builtin/bthreads_service.h"     // BthreadsService
 #include "brpc/builtin/ids_service.h"          // IdsService
 #include "brpc/builtin/sockets_service.h"      // SocketsService
@@ -463,10 +463,10 @@ int Server::AddBuiltinServices() {
         LOG(ERROR) << "Fail to add RpczService";
         return -1;
     }
-//    if (AddBuiltinService(new (std::nothrow) HotspotsService)) {
- //        LOG(ERROR) << "Fail to add HotspotsService";
- //       return -1;
- //   }
+    if (AddBuiltinService(new (std::nothrow) HotspotsService)) {
+         LOG(ERROR) << "Fail to add HotspotsService";
+        return -1;
+    }
     if (AddBuiltinService(new (std::nothrow) IndexService)) {
         LOG(ERROR) << "Fail to add IndexService";
         return -1;
@@ -510,10 +510,10 @@ int Server::AddBuiltinServices() {
     }
 #endif
 
-//    if (AddBuiltinService(new (std::nothrow) PProfService)) {
-//        LOG(ERROR) << "Fail to add PProfService";
-//        return -1;
-//    }
+    if (AddBuiltinService(new (std::nothrow) PProfService)) {
+        LOG(ERROR) << "Fail to add PProfService";
+        return -1;
+    }
     if (FLAGS_enable_dir_service &&
         AddBuiltinService(new (std::nothrow) DirService)) {
         LOG(ERROR) << "Fail to add DirService";
