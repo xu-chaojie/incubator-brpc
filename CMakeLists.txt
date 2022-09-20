@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8.10)
+cmake_minimum_required(VERSION 3.11.0)
 project(brpc C CXX)
 
 # Enable MACOSX_RPATH. Run "cmake --help-policy CMP0042" for policy details.
