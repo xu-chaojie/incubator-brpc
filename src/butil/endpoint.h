@@ -15,7 +15,7 @@
 // Author: Ge,Jun (gejun@baidu.com)
 // Date: Mon. Nov 7 14:47:36 CST 2011
 
-// Wrappers of TCP and port.
+// Wrappers of IP and port.
 
 #ifndef BUTIL_ENDPOINT_H
 #define BUTIL_ENDPOINT_H
@@ -28,7 +28,7 @@
 namespace butil {
 const size_t UNIX_SOCKET_FILE_PATH_SIZE = 108;
 
-// Type of an TCP address
+// Type of an IP address
 typedef struct in_addr ip_t;
 
 static const ip_t IP_ANY = { INADDR_ANY };
@@ -37,7 +37,7 @@ static const ip_t IP_NONE = { INADDR_NONE };
 // Convert |ip| to an integral
 inline in_addr_t ip2int(ip_t ip) { return ip.s_addr; }
 
-// Convert integral |ip_value| to an TCP
+// Convert integral |ip_value| to an IP
 inline ip_t int2ip(in_addr_t ip_value) {
     const ip_t ip = { ip_value };
     return ip;
@@ -53,7 +53,7 @@ struct IPStr {
     char _buf[INET_ADDRSTRLEN];
 };
 
-// Convert TCP to c-style string. Notice that you can serialize ip_t to
+// Convert IP to c-style string. Notice that you can serialize ip_t to
 // std::ostream directly. Use this function when you don't have streaming log.
 // Example: printf("ip=%s\n", ip2str(some_ip).c_str());
 IPStr ip2str(ip_t ip);
@@ -73,7 +73,7 @@ int ip2hostname(ip_t ip, std::string* hostname);
 // NOTE: This function caches result on first call.
 const char* my_hostname();
 
-// TCP of this machine, IP_ANY on error.
+// IP of this machine, IP_ANY on error.
 // NOTE: This function caches result on first call.
 ip_t my_ip();
 // String form.
