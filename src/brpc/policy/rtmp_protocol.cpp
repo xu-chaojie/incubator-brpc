@@ -733,7 +733,7 @@ RtmpContext::RtmpContext(const RtmpClientOptions* copt, const Server* server)
     CHECK_EQ(0, _mstream_map.init(1024, 70));
     CHECK_EQ(0, _trans_map.init(1024, 70));
     for (size_t i = 0; i < ARRAY_SIZE(_cstream_ctx); ++i)
-        _cstream_ctx[i].store(0, butil::memory_order_relaxed);
+        _cstream_ctx[i].store(NULL, butil::memory_order_relaxed);
 }
     
 RtmpContext::~RtmpContext() {
@@ -810,7 +810,7 @@ RtmpUnsentMessage::AppendAndDestroySelf(butil::IOBuf* out, Socket* s) {
 
 RtmpContext::SubChunkArray::SubChunkArray() {
     for (size_t i = 0; i < ARRAY_SIZE(ptrs); ++i)
-        ptrs[i].store(0, butil::memory_order_relaxed);
+        ptrs[i].store(NULL, butil::memory_order_relaxed);
 }
 
 RtmpContext::SubChunkArray::~SubChunkArray() {
