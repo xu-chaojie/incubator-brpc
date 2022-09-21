@@ -320,7 +320,8 @@ int UcpAcceptor::StartAccept(const butil::EndPoint &endpoint,
     ucs_sockaddr_get_port((struct sockaddr *)&attr.sockaddr, &ip_port);
 
     LOG(INFO) << "Ucp server is listening on IP " << ip_str << " port " 
-              << ip_port;
+              << ip_port << ", idle connection check interval: " 
+	      << idle_timeout_sec << "us";
 
     status_ = RUNNING;
 
