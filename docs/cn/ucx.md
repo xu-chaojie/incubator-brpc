@@ -256,13 +256,16 @@ $HOME/ucx.conf
 ```
 [global]                                                                        
 UCX_TCP_CM_REUSEADDR=y
-UCX_ASYNC_MAX_EVENTS=1000000
-UCX_RDMA_CM_REUSEADDR=y
-UCX_RNDV_THRESH=128K
-UCX_TCP_TX_SEG_SIZE=32K
-UCX_TCP_MAX_IOV=128
 UCX_TLS=^tcp
+UCX_ASYNC_MAX_EVENTS=1000000
+UCX_RNDV_THRESH=128K
 UCX_USE_MT_MUTEX=y
+UCX_RDMA_CM_REUSEADDR=y
+UCX_RC_VERBS_MAX_NUM_EPS=10000
+UCX_RC_MLX5_MAX_NUM_EPS=10000
+UCX_MEM_MALLOC_HOOKS=n
+UCX_MEM_MALLOC_RELOC=n
+
 ```
 
 3. 运行
@@ -272,9 +275,9 @@ UCX_USE_MT_MUTEX=y
 <font size="2">
 
 ```
-./multi_threaded_echo_server --brpc_ucp_worker_busy_poll=1
+./multi_threaded_echo_server --brpc_ucp_worker_busy_poll=true --idle_timeout_s=10
 I0811 11:29:09.381323 551185 /home/incubator-brpc/src/brpc/ucp_ctx.cpp:35] Running with ucp library version: 1.14.0
-I0811 11:29:09.410902 551185 /home/incubator-brpc/src/brpc/ucp_acceptor.cpp:321] Ucp server is listening on IP 0.0.0.0 port 13339
+I0811 11:29:09.410902 551185 /home/incubator-brpc/src/brpc/ucp_acceptor.cpp:321] Ucp server is listening on IP 0.0.0.0 port 13339, idle connection check interval: 10s
 I0811 11:29:09.410927 551185 /home/incubator-brpc/src/brpc/server.cpp:1133] Server[example::EchoServiceImpl] is serving on port=8002.
 I0811 11:29:09.411169 551185 /home/incubator-brpc/src/brpc/server.cpp:1136] Check out xxx in web browser.
 I0811 11:30:17.837671 551233 /home/incubator-brpc/src/brpc/ucp_acceptor.cpp:399] UCP server received a connection request from client at address 10.187.0.6:53216
@@ -289,7 +292,7 @@ E0811 11:30:53.501705 551248 /home/incubator-brpc/src/brpc/ucp_worker.cpp:732] E
 <font size="2">
 
 ```
-UCX_TLS=^tcp ./multi_threaded_echo_client --server=10.187.0.91:13339 --use_ucp=true --thread_num=1 --brpc_ucp_worker_busy_poll=1 --attachment_size=4096
+UCX_TLS=^tcp ./multi_threaded_echo_client --server=10.187.0.91:13339 --use_ucp=true --thread_num=1 --brpc_ucp_worker_busy_poll=true --attachment_size=4096
 I0811 11:30:39.776002 963962 /home/incubator-brpc/src/brpc/ucp_ctx.cpp:35] Running with ucp library version: 1.14.0
 I0811 11:30:40.775541 963950 /home/incubator-brpc/example/multi_threaded_echo_c++/client.cpp:144] Sending EchoRequest at qps=19186 latency=50
 I0811 11:30:41.775643 963950 /home/incubator-brpc/example/multi_threaded_echo_c++/client.cpp:144] Sending EchoRequest at qps=20026 latency=47
