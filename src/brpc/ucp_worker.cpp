@@ -50,6 +50,7 @@ DEFINE_bool(brpc_ucp_worker_busy_poll, true, "Enable/disable busy poll");
 DEFINE_int32(brpc_ucp_worker_poll_time, 60, "Polling duration in microseconds)");
 DEFINE_int32(brpc_ucp_worker_poll_yield, 0, "Thread yields after accumulated so many polling loops");
 DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
+DEFINE_bool(brpc_ucp_always_flush, false, "flush when disconnecting");
 
 static void *alloc_trie_node(struct butil::pctrie *ptree)
 {
@@ -780,6 +781,8 @@ void UcpWorker::ErrorCallback(void *arg, ucp_ep_h ep, ucs_status_t status)
         LOG(ERROR) << "Can not find ep in ErrorCallback, may be moved";
         return;
     }
+    if (status == UCS_ERR_CONNECTION_RESET)
+        conn->conn_was_reset_ = true;
     butil::EndPointStr str = endpoint2str(conn->remote_side_);
     LOG(ERROR) << "Error occurred on remote side " << str.c_str()
                << " (" << ucs_status_string(status) << ")";
@@ -818,13 +821,15 @@ void UcpWorker::Release(UcpConnectionRef conn)
     CancelRequests(conn);
 
     /*
-     * It is better th set mode to FLUSH, it is too diffcult to use 
+     * It is better to set mode to FLUSH, it is too diffcult to use 
      * UCP_EP_CLOSE_MODE_FORCE, as it requires both sides to use
      * UCP_ERR_HANDLING_MODE_PEER
      */
-    ucs_status_t code = conn->ucp_code_.load(std::memory_order_relaxed);
-    int mode = (code == UCS_ERR_CONNECTION_RESET) ?
-        UCP_EP_CLOSE_MODE_FORCE : UCP_EP_CLOSE_MODE_FLUSH;
+    int mode = UCP_EP_CLOSE_MODE_FLUSH;
+    if (conn->conn_was_reset_) {
+        if (!FLAGS_brpc_ucp_always_flush)
+            mode = UCP_EP_CLOSE_MODE_FORCE;
+    }
     request = ucp_ep_close_nb(ep, mode);
     if (request == NULL) {
         conn->ep_ = NULL;

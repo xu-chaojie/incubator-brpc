@@ -161,7 +161,8 @@ private:
     butil::atomic<ucs_status_t> ucp_code_;
     butil::atomic<ucs_status_t> ucp_recv_code_;
     butil::atomic<SocketId> socket_id_;
-    int socket_id_set_;
+    bool socket_id_set_;
+    bool conn_was_reset_;
     int state_;
     butil::IOPortal in_buf_;
     // Cached remote address
