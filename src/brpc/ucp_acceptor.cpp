@@ -321,7 +321,7 @@ int UcpAcceptor::StartAccept(const butil::EndPoint &endpoint,
 
     LOG(INFO) << "Ucp server is listening on IP " << ip_str << " port " 
               << ip_port << ", idle connection check interval: " 
-	      << idle_timeout_sec << "us";
+	      << idle_timeout_sec << "s";
 
     status_ = RUNNING;
 
