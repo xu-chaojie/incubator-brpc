@@ -402,6 +402,20 @@ static void MsgHeaderIn(MsgHeader *host, MsgHeader *net)
     host->sn = le64toh(net->sn);
 }
 
+static inline void MsgHeaderIn(MsgHeader *host, const MsgHeader *net)
+{
+    host->cmd = le32toh(net->cmd);
+    host->pad = le32toh(net->pad);
+    host->sn = le64toh(net->sn);
+}
+
+static inline void MsgHeaderOut(const MsgHeader *host, MsgHeader *net)
+{
+    net->cmd = htole32(host->cmd);
+    net->pad = htole32(host->pad);
+    net->sn = htole64(host->sn);
+}
+
 ucs_status_t UcpWorker::AmCallback(void *arg,
      const void *header, size_t header_length, void *data, size_t length,
      const ucp_am_recv_param_t *param)
@@ -1061,6 +1075,7 @@ ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn,
         return 0;
 
     for (int i = 0; i < ndata; ++i) {
+        MsgHeader header;
         UcpAmSendInfo *msg = UcpAmSendInfo::Allocate();
         if (msg == NULL) {
             LOG(ERROR) << "Cannot allocater UcpAmSendInfo";
@@ -1068,9 +1083,10 @@ ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn,
             break;
         }
         msg->conn = conn;
-        msg->header.cmd = htole32(cmd);
-        msg->header.pad = 0;
-        msg->header.sn = htole64(conn->next_send_sn_);
+        header.cmd = cmd;
+        header.pad = 0;
+        header.sn = conn->next_send_sn_;
+        MsgHeaderOut(&header, &msg->header);
         msg->buf.append(butil::IOBuf::Movable(*data_list[i]));
         msg->buf.fill_ucp_iov(&msg->iov, INT_MAX,
                               &msg->nvec, ULONG_MAX);
