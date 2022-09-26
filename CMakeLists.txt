@@ -325,6 +325,7 @@ set(BUTIL_SOURCES
     ${PROJECT_SOURCE_DIR}/src/butil/popen.cpp
     ${PROJECT_SOURCE_DIR}/src/butil/refcountedobj.cpp
     ${PROJECT_SOURCE_DIR}/src/butil/pctrie.cc
+    ${PROJECT_SOURCE_DIR}/src/butil/lfstack.cpp
     ${PROJECT_SOURCE_DIR}/src/butil/uma/mtx.c
     ${PROJECT_SOURCE_DIR}/src/butil/uma/rwlock.c
     ${PROJECT_SOURCE_DIR}/src/butil/uma/smp.c
