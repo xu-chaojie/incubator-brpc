@@ -21,6 +21,15 @@
 #define UMA_TIME_H
 
 #include <sys/time.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int uma_ratecheck(struct timeval *lasttime, const struct timeval *mininterval);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
