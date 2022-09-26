@@ -436,8 +436,9 @@ inline bool operator!=(const butil::IOBuf& b1, const butil::IOBuf& b2)
 // Typically used as the buffer to store bytes from sockets.
 class IOPortal : public IOBuf {
 public:
-    IOPortal() : _block(NULL) { }
-    IOPortal(const IOPortal& rhs) : IOBuf(rhs), _block(NULL) { } 
+    IOPortal() : _block(NULL), _release_to_tls(true) { }
+    IOPortal(const IOPortal& rhs) : IOBuf(rhs), _block(NULL),
+        _release_to_tls(rhs._release_to_tls) { } 
     ~IOPortal();
     IOPortal& operator=(const IOPortal& rhs);
         
@@ -475,13 +476,14 @@ public:
     void return_cached_blocks();
 
 private:
-    static void return_cached_blocks_impl(Block*);
+    static void return_cached_blocks_impl(Block*, bool);
 
     // Cached blocks for appending. Notice that the blocks are released
     // until return_cached_blocks()/clear()/dtor() are called, rather than
     // released after each append_xxx(), which makes messages read from one
     // file descriptor more likely to share blocks and have less BlockRefs.
     Block* _block;
+    bool _release_to_tls;
 };
 
 // Parse protobuf message from IOBuf. Notice that this wrapper does not change

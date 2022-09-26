@@ -40,8 +40,9 @@ inline ssize_t IOPortal::append_from_file_descriptor(int fd, size_t max_count) {
 
 inline void IOPortal::return_cached_blocks() {
     if (_block) {
-        return_cached_blocks_impl(_block);
+        return_cached_blocks_impl(_block, _release_to_tls);
         _block = NULL;
+        _release_to_tls = true;
     }
 }
 

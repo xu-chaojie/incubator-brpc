@@ -22,6 +22,7 @@
 #include <mesalink/openssl/err.h>
 #endif
 #include <sys/syscall.h>                   // syscall
+#include <sys/mman.h>
 #include <fcntl.h>                         // O_RDONLY
 #include <errno.h>                         // errno
 #include <limits.h>                        // CHAR_BIT
@@ -35,21 +36,29 @@
 #include "butil/fd_guard.h"                 // butil::fd_guard
 #include "butil/iobuf.h"
 #include "butil/uma/uma/uma.h"
+#include "butil/lfstack.h"
 
-DEFINE_int32(butil_iobuf_max, 400000, "Maximum number of iobuf blocks allowed");
+DEFINE_int32(butil_iobuf_64k_max, 16000, "Maximum number of 64k blocks cached");
+DEFINE_int32(butil_iobuf_1M_max, 1000, "Maximum number of 1M blocks cached");
 
 namespace butil {
 namespace iobuf {
 
 static pthread_once_t uma_start_once = PTHREAD_ONCE_INIT;
 static uma_zone_t iobuf_zone;
+static LFStack iobuf_64k_cache;
+static LFStack iobuf_1M_cache;
 static void do_start_uma()
 {
     iobuf_zone = uma_zcreate("iobuf", IOBuf::DEFAULT_BLOCK_SIZE,
-         NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, UMA_ZONE_LARGE_KEG);
-    int max_item = uma_zone_set_max(iobuf_zone, FLAGS_butil_iobuf_max);
-    LOG(INFO) << "Maximum allowed iobuf block is : " << max_item;
-    uma_zone_set_warning(iobuf_zone, "Maximum allowed block reached!");
+         NULL, NULL, NULL, NULL, UMA_ALIGN_PTR,
+         UMA_ZONE_LARGE_KEG | UMA_ZONE_OFFPAGE);
+    CHECK(iobuf_zone != NULL) << "cannot create iobuf_zone";
+    int rc;
+    rc = iobuf_64k_cache.init(FLAGS_butil_iobuf_64k_max);
+    CHECK(rc == 0) << "cannot create 64k size iobuf cache";
+    rc = iobuf_1M_cache.init(FLAGS_butil_iobuf_1M_max);
+    CHECK(rc == 0) << "cannot create 1M size iobuf cache";
 }
 
 static inline void start_uma()
@@ -181,6 +190,19 @@ void *iobuf_malloc(size_t size)
     start_uma();
     if (size == IOBuf::DEFAULT_BLOCK_SIZE)
         return uma_zalloc(iobuf_zone, 0);
+    if (size == 64 * 1024 || size == 1024 * 1024) {
+        void *buf;
+        if (size == 64 * 1024)
+            buf = iobuf_64k_cache.pop();
+        else
+            buf = iobuf_1M_cache.pop();
+        if (buf) {
+            return buf;
+        }
+        buf = mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANON,
+                    -1, 0);
+        return buf;
+    }
     return ::malloc(size);
 }
 
@@ -188,6 +210,15 @@ void iobuf_free(void *mem, size_t size)
 {
     if (size == IOBuf::DEFAULT_BLOCK_SIZE)
         uma_zfree(iobuf_zone, mem);
+    else if (size == 64 * 1024) {
+        if (!iobuf_64k_cache.push(mem))
+            return;
+        munmap(mem, size);
+    } else if (size == 1024 * 1024) {
+        if (!iobuf_1M_cache.push(mem))
+            return;
+        munmap(mem, size);
+    }
     else
         ::free(mem);
 }
@@ -1744,14 +1775,18 @@ ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, iobuf_ucp_iov_t 
 {
     auto &vec = *_vec;
     int &nvec = *_nvec;
-    size_t space = 0;
+    size_t block_size = 0, space = 0;
     Block* prev_p = NULL;
     Block* p = _block;
     int size_hint;
 
-    size_hint = (max_count + DEFAULT_BLOCK_SIZE - 1)/DEFAULT_BLOCK_SIZE;
-    if (size_hint < 16)
-        size_hint = 16;
+    if (max_count < 64 * 1024)
+        block_size = DEFAULT_BLOCK_SIZE;
+    else if (max_count < 1024 * 1024)
+        block_size = 64 * 1024;
+    else
+        block_size = 1024 * 1024;
+    size_hint = (max_count + block_size - 1) & ~(block_size - 1);
     vec.reserve(size_hint);
 
     nvec = 0;
@@ -1759,11 +1794,12 @@ ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, iobuf_ucp_iov_t 
         if (vec.size() < (size_t)nvec + 1)
             vec.resize(nvec+1);
         if (p == NULL) {
-            p = iobuf::acquire_tls_block();
+            p = iobuf::create_block(block_size);
             if (BAIDU_UNLIKELY(!p)) {
                 errno = ENOMEM;
                 return -1;
             }
+            _release_to_tls = false;
             if (prev_p != NULL) {
                 prev_p->portal_next = p;
             } else {
@@ -1900,8 +1936,16 @@ ssize_t IOPortal::append_from_SSL_channel(
     return nr;
 }
 
-void IOPortal::return_cached_blocks_impl(Block* b) {
-    iobuf::release_tls_block_chain(b);
+void IOPortal::return_cached_blocks_impl(Block* b, bool release_to_tls) {
+    if (release_to_tls)
+        iobuf::release_tls_block_chain(b);
+    else {
+        do {
+            IOBuf::Block* const saved_next = b->portal_next;
+            b->dec_ref();
+            b = saved_next;
+        } while (b);
+    }
 }
 
 IOBufAsZeroCopyInputStream::IOBufAsZeroCopyInputStream(const IOBuf& buf)
