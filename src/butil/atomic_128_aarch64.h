@@ -1,3 +1,22 @@
+/*
+ *  Copyright (c) 2022 NetEase Inc.
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ */
+
+#ifndef BUTIL_ATOMIC_128_AARCH64_H
+#define BUTIL_ATOMIC_128_AARCH64_H
+
 static inline int
 atomic128_cmp_exchange(ntes_int128_t *dst, ntes_int128_t *exp,
     const ntes_int128_t *src, unsigned int weak, int success, 
@@ -73,3 +92,4 @@ atomic128_cmp_exchange(ntes_int128_t *dst, ntes_int128_t *exp,
 	return (old.int128 == expected.int128);
 }
 
+#endif // BUTIL_ATOMIC_128_AARCH64_H
