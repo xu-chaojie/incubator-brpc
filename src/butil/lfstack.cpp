@@ -21,6 +21,8 @@
 #include "lfstack.h"
 #include "atomic_128.h"
 
+#include <new> // for inplace new
+
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,6 +54,8 @@ LFStack::~LFStack()
 
 int LFStack::init(size_t max_size)
 {
+    if (node_buffer_)
+        return EAGAIN;
     node_buffer_ = (stack_node *)::malloc(max_size * sizeof(stack_node));
     if (node_buffer_ == NULL)
         return ENOMEM;
@@ -62,11 +66,18 @@ int LFStack::init(size_t max_size)
     return 0;
 }
 
+void LFStack::fini()
+{
+    ::free(node_buffer_);
+    ::new (this) LFStack;
+}
+
 #define _i128(p) static_cast<ntes_int128_t *>((void *)(p))
 
 inline LFStack::stack_node *LFStack::lf_pop(stack_head *head)
 {
     stack_head next, orig = *head;
+
     do {
         if (orig.node == NULL)
             return NULL;
@@ -106,9 +117,9 @@ void *LFStack::pop()
     stack_node *node = lf_pop(&head_);
     if (node == NULL)
         return NULL;
-    __atomic_fetch_sub(&size_, 1, __ATOMIC_RELAXED);
     void *value = node->value;
     lf_push(&free_, node);
+    __atomic_fetch_sub(&size_, 1, __ATOMIC_RELAXED);
     return value;
 }
 

@@ -21,7 +21,7 @@
 #ifndef BUTIL_LFSTACK_H
 #define BUTIL_LFSTACK_H
 
-#include <stdlib.h>
+#include <sys/types.h>
 #include <stdint.h>
 
 namespace butil {
@@ -33,9 +33,23 @@ public:
     LFStack(size_t max_size);
     ~LFStack();
     
+    // Init stack with max_size of elements 
     int init(size_t max_size);
+
+    // Clear stack
+    void fini();
+
+    // Save value into stack
+    // Return: 0 sucess
+    //         non-zero stack is full
     int push(void *value);
+
+    // Pop saved value
+    // Return: NULL if stack is empty
+    //         NON-NULL value if success
     void *pop(void);
+
+    // Return number of elements in stack
     size_t size() const {
         return  __atomic_load_n(&size_, __ATOMIC_RELAXED);
     }
@@ -57,6 +71,10 @@ private:
     stack_head head_ __attribute__((__aligned__(16)));
     stack_head free_ __attribute__((__aligned__(16)));
     size_t size_;
+
+private:
+    LFStack(const LFStack &);
+    void operator= (const LFStack &);
 
     static void lf_push(stack_head *head, stack_node *node);
     static stack_node *lf_pop(stack_head *head);
