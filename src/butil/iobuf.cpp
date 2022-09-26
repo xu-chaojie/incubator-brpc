@@ -40,12 +40,11 @@
 #include "butil/lfstack.h"
 #include "bvar/bvar.h"
 
-DEFINE_int32(butil_iobuf_64k_max, 16000, "Maximum number of 64k blocks cached");
-DEFINE_int32(butil_iobuf_1M_max, 1000, "Maximum number of 1M blocks cached");
-
-
 namespace butil {
 namespace iobuf {
+
+DEFINE_int32(butil_iobuf_64k_max, 16000, "Maximum number of 64k blocks cached");
+DEFINE_int32(butil_iobuf_1M_max, 1000, "Maximum number of 1M blocks cached");
 
 bvar::Adder<int> g_iobuf_64k_count("64k iobuf");
 bvar::Adder<int> g_iobuf_64k_overflow("64k iobuf cache overflow");
