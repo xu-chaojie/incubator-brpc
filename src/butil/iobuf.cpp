@@ -36,13 +36,21 @@
 #include "butil/fd_guard.h"                 // butil::fd_guard
 #include "butil/iobuf.h"
 #include "butil/uma/uma/uma.h"
+#include "butil/uma/uma/time.h"
 #include "butil/lfstack.h"
+#include "bvar/bvar.h"
 
 DEFINE_int32(butil_iobuf_64k_max, 16000, "Maximum number of 64k blocks cached");
 DEFINE_int32(butil_iobuf_1M_max, 1000, "Maximum number of 1M blocks cached");
 
+
 namespace butil {
 namespace iobuf {
+
+bvar::Adder<int> g_iobuf_64k_count("64k iobuf");
+bvar::Adder<int> g_iobuf_64k_overflow("64k iobuf cache overflow");
+bvar::Adder<int> g_iobuf_1M_count("1M iobuf");
+bvar::Adder<int> g_iobuf_1M_overflow("1M iobuf cache overflow");
 
 static pthread_once_t uma_start_once = PTHREAD_ONCE_INIT;
 static uma_zone_t iobuf_zone;
@@ -201,6 +209,12 @@ void *iobuf_malloc(size_t size)
         }
         buf = mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANON,
                     -1, 0);
+        if (buf) {
+            if (size == 64 * 1024)
+                g_iobuf_64k_count << 1;
+            else
+                g_iobuf_1M_count << 1;
+        }
         return buf;
     }
     return ::malloc(size);
@@ -208,16 +222,34 @@ void *iobuf_malloc(size_t size)
 
 void iobuf_free(void *mem, size_t size)
 {
+    constexpr struct timeval interval = {30, 0};
+
     if (size == IOBuf::DEFAULT_BLOCK_SIZE)
         uma_zfree(iobuf_zone, mem);
     else if (size == 64 * 1024) {
+        static struct timeval tv_64k_last = {0, 0};
         if (!iobuf_64k_cache.push(mem))
             return;
         munmap(mem, size);
+
+        if (uma_ratecheck(&tv_64k_last, &interval)) {
+            LOG(WARNING) << "64k iobuf cache overflow";
+        }
+
+        g_iobuf_64k_overflow << 1;
+        g_iobuf_64k_count << -1;
     } else if (size == 1024 * 1024) {
+        static struct timeval tv_1M_last = {0, 0};
         if (!iobuf_1M_cache.push(mem))
             return;
         munmap(mem, size);
+
+        if (uma_ratecheck(&tv_1M_last, &interval)) {
+            LOG(WARNING) << "1M iobuf cache overflow";
+        }
+
+        g_iobuf_1M_count << -1;
+        g_iobuf_1M_overflow << 1;
     }
     else
         ::free(mem);
