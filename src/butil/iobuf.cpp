@@ -43,17 +43,21 @@
 namespace butil {
 namespace iobuf {
 
-DEFINE_int32(butil_iobuf_64k_max, 16000, "Maximum number of 64k blocks cached");
+static int get_uma_count(void *arg);
+
+DEFINE_int32(butil_iobuf_64K_max, 16000, "Maximum number of 64k blocks cached");
 DEFINE_int32(butil_iobuf_1M_max, 1000, "Maximum number of 1M blocks cached");
 
 bvar::Adder<int> g_iobuf_64k_count("64k iobuf");
 bvar::Adder<int> g_iobuf_64k_overflow("64k iobuf cache overflow");
 bvar::Adder<int> g_iobuf_1M_count("1M iobuf");
 bvar::Adder<int> g_iobuf_1M_overflow("1M iobuf cache overflow");
+bvar::PassiveStatus<int> g_iobuf_zone_block_count("iobuf zone block count",
+    get_uma_count, NULL);
 
 static pthread_once_t uma_start_once = PTHREAD_ONCE_INIT;
 static uma_zone_t iobuf_zone;
-static LFStack iobuf_64k_cache;
+static LFStack iobuf_64K_cache;
 static LFStack iobuf_1M_cache;
 static void do_start_uma()
 {
@@ -62,7 +66,7 @@ static void do_start_uma()
          UMA_ZONE_LARGE_KEG | UMA_ZONE_OFFPAGE);
     CHECK(iobuf_zone != NULL) << "cannot create iobuf_zone";
     int rc;
-    rc = iobuf_64k_cache.init(FLAGS_butil_iobuf_64k_max);
+    rc = iobuf_64K_cache.init(FLAGS_butil_iobuf_64K_max);
     CHECK(rc == 0) << "cannot create 64k size iobuf cache";
     rc = iobuf_1M_cache.init(FLAGS_butil_iobuf_1M_max);
     CHECK(rc == 0) << "cannot create 1M size iobuf cache";
@@ -71,6 +75,11 @@ static void do_start_uma()
 static inline void start_uma()
 {
     pthread_once(&uma_start_once, do_start_uma);
+}
+
+static int get_uma_count(void *)
+{
+    return iobuf_zone ? uma_zone_get_cur(iobuf_zone) : 0;
 }
 
 typedef ssize_t (*iov_function)(int fd, const struct iovec *vector,
@@ -200,7 +209,7 @@ void *iobuf_malloc(size_t size)
     if (size == 64 * 1024 || size == 1024 * 1024) {
         void *buf;
         if (size == 64 * 1024)
-            buf = iobuf_64k_cache.pop();
+            buf = iobuf_64K_cache.pop();
         else
             buf = iobuf_1M_cache.pop();
         if (buf) {
@@ -227,7 +236,7 @@ void iobuf_free(void *mem, size_t size)
         uma_zfree(iobuf_zone, mem);
     else if (size == 64 * 1024) {
         static struct timeval tv_64k_last = {0, 0};
-        if (!iobuf_64k_cache.push(mem))
+        if (!iobuf_64K_cache.push(mem))
             return;
         munmap(mem, size);
 
