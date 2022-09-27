@@ -49,7 +49,7 @@ static void *task_routine(void *arg)
 	return NULL;
 }
 
-void taskqueue_enqueue(struct task *task)
+void uma_taskqueue_enqueue(struct task *task)
 {
 	pthread_mutex_lock(&task_lock);
 	if (task_thread == 0) {
