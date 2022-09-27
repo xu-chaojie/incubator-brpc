@@ -251,7 +251,7 @@ int UcpAcceptor::StartAccept(const butil::EndPoint &endpoint,
     }
 
     // Create ucp worker
-    if (create_ucp_worker(get_or_new_ucp_ctx()->context(), &worker,
+    if (create_ucp_worker(get_or_create_ucp_ctx()->context(), &worker,
          0, "listener", &efd))
         return -1;
 

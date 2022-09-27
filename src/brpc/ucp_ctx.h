@@ -42,7 +42,7 @@ private:
     int cpu_latency_fd_;
 };
 
-UCP_Context* get_or_new_ucp_ctx();
+UCP_Context* get_or_create_ucp_ctx();
 /* Simple wrappers for ucx */
 int create_ucp_worker(ucp_context_h ucp_ctx, ucp_worker_h *ucp_worker,
     int event, const char *name, int *efd);

@@ -99,7 +99,7 @@ static void init_ucx_ctx() {
     }
 }
 
-UCP_Context* get_or_new_ucp_ctx() {
+UCP_Context* get_or_create_ucp_ctx() {
     pthread_once(&g_ucp_ctx_init, init_ucx_ctx);
     return g_ucp_ctx;
 }
