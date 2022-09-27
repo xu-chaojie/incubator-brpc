@@ -42,6 +42,6 @@ struct task {
         (task)->ta_context = (context);                 \
 } while (0)                                                  
 
-void taskqueue_enqueue(struct task *task); 
+void uma_taskqueue_enqueue(struct task *task); 
 
 #endif /* !UMA_TASK_H */

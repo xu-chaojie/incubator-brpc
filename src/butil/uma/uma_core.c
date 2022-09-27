@@ -422,7 +422,7 @@ zone_maxaction(uma_zone_t zone)
 {
 
 	if (zone->uz_maxaction.ta_func != NULL)
-		taskqueue_enqueue(&zone->uz_maxaction);
+		uma_taskqueue_enqueue(&zone->uz_maxaction);
 }
 
 static void
