@@ -167,7 +167,7 @@ int UCP_Context::init()
 }
 
 int create_ucp_worker(ucp_context_h ucp_ctx, ucp_worker_h *ucp_worker,
-    int events, int *efd)
+    int events, const char *name, int *efd)
 {
     ucp_worker_params_t worker_params;
     ucs_status_t stat;
@@ -175,7 +175,9 @@ int create_ucp_worker(ucp_context_h ucp_ctx, ucp_worker_h *ucp_worker,
     memset(&worker_params, 0, sizeof(worker_params));
 
     worker_params.field_mask  = UCP_WORKER_PARAM_FIELD_THREAD_MODE |
-                                UCP_WORKER_PARAM_FIELD_AM_ALIGNMENT;
+                                UCP_WORKER_PARAM_FIELD_AM_ALIGNMENT|
+                                UCP_WORKER_PARAM_FIELD_NAME ;
+    worker_params.name = name;
     worker_params.thread_mode = UCS_THREAD_MODE_SINGLE;
     worker_params.am_alignment = 8; // FIXME, need sync with spdk
     if (events) {
