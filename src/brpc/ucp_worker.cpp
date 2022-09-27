@@ -192,7 +192,7 @@ int UcpWorker::Start()
     }
 
     // Create ucp worker
-    if (create_ucp_worker(&w, &efd, 0))
+    if (create_ucp_worker(get_or_new_ucp_ctx()->context(), &w, 0, &efd))
         return -1;
 
     event_fd_ = efd;

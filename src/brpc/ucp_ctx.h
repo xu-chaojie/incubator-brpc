@@ -43,7 +43,9 @@ private:
 };
 
 UCP_Context* get_or_new_ucp_ctx();
-int create_ucp_worker(ucp_worker_h *ucp_worker, int *efd, int events);
+/* Simple wrappers for ucx */
+int create_ucp_worker(ucp_context_h ucp_ctx, ucp_worker_h *ucp_worker,
+    int event, int *efd);
 int create_ucp_ep(ucp_worker_h w, ucp_conn_request_h conn_request,
     ucp_err_handler_cb_t err_cb, void *err_arg, ucp_ep_h *ep);
 int create_ucp_ep(ucp_worker_h w, const butil::EndPoint &peer,

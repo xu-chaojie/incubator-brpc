@@ -166,7 +166,8 @@ int UCP_Context::init()
     return ret;
 }
 
-int create_ucp_worker(ucp_worker_h *ucp_worker, int *efd, int events)
+int create_ucp_worker(ucp_context_h ucp_ctx, ucp_worker_h *ucp_worker,
+    int events, int *efd)
 {
     ucp_worker_params_t worker_params;
     ucs_status_t stat;
@@ -182,8 +183,7 @@ int create_ucp_worker(ucp_worker_h *ucp_worker, int *efd, int events)
         worker_params.events = events;
     }
 
-    stat = ucp_worker_create(get_or_new_ucp_ctx()->context(),
-        &worker_params, ucp_worker);
+    stat = ucp_worker_create(ucp_ctx, &worker_params, ucp_worker);
     if (stat != UCS_OK) {
         LOG(ERROR) << "failed to ucp_worker_create ("
                    << ucs_status_string(stat) << ")";
