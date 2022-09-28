@@ -44,13 +44,15 @@ namespace butil {
 namespace iobuf {
 
 static int get_uma_count(void *arg);
+static int get_64K_count(void *arg);
+static int get_1M_count(void *arg);
 
 DEFINE_int32(butil_iobuf_64K_max, 16000, "Maximum number of 64k blocks cached");
 DEFINE_int32(butil_iobuf_1M_max, 1000, "Maximum number of 1M blocks cached");
 
-bvar::Adder<int> g_iobuf_64k_count("64k iobuf");
-bvar::Adder<int> g_iobuf_64k_overflow("64k iobuf cache overflow");
-bvar::Adder<int> g_iobuf_1M_count("1M iobuf");
+bvar::PassiveStatus<int> g_iobuf_64k_count("64K iobuf", get_64K_count, NULL);
+bvar::Adder<int> g_iobuf_64k_overflow("64K iobuf cache overflow");
+bvar::PassiveStatus<int> g_iobuf_1M_count("1M iobuf", get_1M_count, NULL);
 bvar::Adder<int> g_iobuf_1M_overflow("1M iobuf cache overflow");
 bvar::PassiveStatus<int> g_iobuf_zone_block_count("iobuf zone block count",
     get_uma_count, NULL);
@@ -80,6 +82,16 @@ static inline void start_uma()
 static int get_uma_count(void *)
 {
     return iobuf_zone ? uma_zone_get_cur(iobuf_zone) : 0;
+}
+
+static int get_64K_count(void *)
+{
+    return iobuf_64K_cache.size();
+}
+
+static int get_1M_count(void *)
+{
+    return iobuf_1M_cache.size();
 }
 
 typedef ssize_t (*iov_function)(int fd, const struct iovec *vector,
@@ -217,12 +229,6 @@ void *iobuf_malloc(size_t size)
         }
         buf = mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANON,
                     -1, 0);
-        if (buf) {
-            if (size == 64 * 1024)
-                g_iobuf_64k_count << 1;
-            else
-                g_iobuf_1M_count << 1;
-        }
         return buf;
     }
     return ::malloc(size);
@@ -245,7 +251,6 @@ void iobuf_free(void *mem, size_t size)
         }
 
         g_iobuf_64k_overflow << 1;
-        g_iobuf_64k_count << -1;
     } else if (size == 1024 * 1024) {
         static struct timeval tv_1M_last = {0, 0};
         if (!iobuf_1M_cache.push(mem))
@@ -256,7 +261,6 @@ void iobuf_free(void *mem, size_t size)
             LOG(WARNING) << "1M iobuf cache overflow";
         }
 
-        g_iobuf_1M_count << -1;
         g_iobuf_1M_overflow << 1;
     }
     else
