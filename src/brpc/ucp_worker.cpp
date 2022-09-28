@@ -192,7 +192,9 @@ int UcpWorker::Start()
     }
 
     // Create ucp worker
-    if (create_ucp_worker(get_or_create_ucp_ctx()->context(), &w, 0, "io",
+    char name[64];
+    snprintf(name, sizeof(name), "io-%d", id_);
+    if (create_ucp_worker(get_or_create_ucp_ctx()->context(), &w, 0, name,
          &efd)) {
         return -1;
     }
