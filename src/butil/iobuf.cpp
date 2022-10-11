@@ -43,7 +43,8 @@
 namespace butil {
 namespace iobuf {
 
-static int get_uma_count(void *arg);
+static int get_uma_iobuf_count(void *arg);
+static int get_uma_block_count(void *arg);
 static int get_64K_count(void *arg);
 static int get_1M_count(void *arg);
 
@@ -54,34 +55,31 @@ bvar::PassiveStatus<int> g_iobuf_64k_count("64K iobuf", get_64K_count, NULL);
 bvar::Adder<int> g_iobuf_64k_overflow("64K iobuf cache overflow");
 bvar::PassiveStatus<int> g_iobuf_1M_count("1M iobuf", get_1M_count, NULL);
 bvar::Adder<int> g_iobuf_1M_overflow("1M iobuf cache overflow");
-bvar::PassiveStatus<int> g_iobuf_zone_block_count("iobuf zone block count",
-    get_uma_count, NULL);
+bvar::PassiveStatus<int> g_iobuf_zone_obj_count("iobuf uma count",
+    get_uma_iobuf_count, NULL);
+bvar::PassiveStatus<int> g_block_zone_obj_count("block uma count",
+    get_uma_block_count, NULL);
 
 static pthread_once_t uma_start_once = PTHREAD_ONCE_INIT;
 static uma_zone_t iobuf_zone;
+static uma_zone_t block_zone;
 static LFStack iobuf_64K_cache;
 static LFStack iobuf_1M_cache;
-static void do_start_uma()
-{
-    iobuf_zone = uma_zcreate("iobuf", IOBuf::DEFAULT_BLOCK_SIZE,
-         NULL, NULL, NULL, NULL, UMA_ALIGN_PTR,
-         UMA_ZONE_LARGE_KEG | UMA_ZONE_OFFPAGE);
-    CHECK(iobuf_zone != NULL) << "cannot create iobuf_zone";
-    int rc;
-    rc = iobuf_64K_cache.init(FLAGS_butil_iobuf_64K_max);
-    CHECK(rc == 0) << "cannot create 64k size iobuf cache";
-    rc = iobuf_1M_cache.init(FLAGS_butil_iobuf_1M_max);
-    CHECK(rc == 0) << "cannot create 1M size iobuf cache";
-}
+static void do_start_uma();
 
 static inline void start_uma()
 {
     pthread_once(&uma_start_once, do_start_uma);
 }
 
-static int get_uma_count(void *)
+static int get_uma_iobuf_count(void *)
 {
     return iobuf_zone ? uma_zone_get_cur(iobuf_zone) : 0;
+}
+
+static int get_uma_block_count(void *)
+{
+    return block_zone ? uma_zone_get_cur(block_zone) : 0;
 }
 
 static int get_64K_count(void *)
@@ -319,6 +317,7 @@ struct IOBuf::Block {
     // When flag & IOBUF_BLOCK_FLAGS_USER_DATA is non-0, data points to the user data and
     // the deleter is put in UserDataExtension at `(char*)this+sizeof(Block)'
     char* data;
+    UserDataExtension ext;
         
     Block(char* data_in, uint32_t data_size)
         : nshared(1)
@@ -362,8 +361,7 @@ struct IOBuf::Block {
 
     // Undefined behavior when (flags & IOBUF_BLOCK_FLAGS_USER_DATA) is 0.
     UserDataExtension* get_user_data_extension() {
-        char* p = (char*)this;
-        return (UserDataExtension*)(p + sizeof(Block));
+        return &ext;
     }
 
     inline void check_abi() {
@@ -385,18 +383,19 @@ struct IOBuf::Block {
         if (nshared.fetch_sub(1, butil::memory_order_release) == 1) {
             butil::atomic_thread_fence(butil::memory_order_acquire);
             size_t size = this->mem_size;
+            char *data_save = this->data;
             if (!flags) {
                 iobuf::g_nblock.fetch_sub(1, butil::memory_order_relaxed);
                 iobuf::g_blockmem.fetch_sub(cap + sizeof(Block),
                                             butil::memory_order_relaxed);
                 this->~Block();
-                iobuf::blockmem_deallocate(this, size);
+                iobuf::blockmem_deallocate(data_save, size);
             } else if (flags & IOBUF_BLOCK_FLAGS_USER_DATA) {
                 UserDataExtension* e = get_user_data_extension();
                 e->deleter2(data, e->arg);
                 this->~Block();
-                free(this);
             }
+            uma_zfree(iobuf::block_zone, this);
         }
     }
 
@@ -409,6 +408,22 @@ struct IOBuf::Block {
 };
 
 namespace iobuf {
+
+static void do_start_uma()
+{
+    iobuf_zone = uma_zcreate("iobuf", IOBuf::DEFAULT_BLOCK_SIZE,
+         NULL, NULL, NULL, NULL, UMA_ALIGN_PTR,
+         UMA_ZONE_LARGE_KEG | UMA_ZONE_OFFPAGE);
+    CHECK(iobuf_zone != NULL) << "cannot create iobuf_zone";
+    block_zone = uma_zcreate("iobuf::block", sizeof(IOBuf::Block),
+         NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
+    CHECK(block_zone != NULL) << "cannot create block_zone";
+    int rc;
+    rc = iobuf_64K_cache.init(FLAGS_butil_iobuf_64K_max);
+    CHECK(rc == 0) << "cannot create 64k size iobuf cache";
+    rc = iobuf_1M_cache.init(FLAGS_butil_iobuf_1M_max);
+    CHECK(rc == 0) << "cannot create 1M size iobuf cache";
+}
 
 // for unit test
 int block_shared_count(IOBuf::Block const* b) { return b->ref_count(); }
@@ -426,6 +441,8 @@ uint32_t block_size(IOBuf::Block const* b) {
 }
 
 inline IOBuf::Block* create_block(const size_t block_size) {
+    iobuf::start_uma();
+
     if (block_size > 0xFFFFFFFFULL) {
         LOG(FATAL) << "block_size=" << block_size << " is too large";
         return NULL;
@@ -434,10 +451,10 @@ inline IOBuf::Block* create_block(const size_t block_size) {
     if (mem == NULL) {
         return NULL;
     }
-    auto p = new (mem) IOBuf::Block(mem + sizeof(IOBuf::Block),
-                                  block_size - sizeof(IOBuf::Block));
-    p->mem_size = block_size;
-    return p;
+    auto blk_mem = uma_zalloc(block_zone, 0);
+    auto blk = new (blk_mem) IOBuf::Block(mem, block_size);
+    blk->mem_size = block_size;
+    return blk;
 }
 
 inline IOBuf::Block* create_block() {
@@ -1413,18 +1430,21 @@ static void free_wrapper(void *mem, void *arg)
 }
 
 int IOBuf::append_user_data(void* data, size_t size, UserDataDeleter2 deleter, void *arg) {
+    iobuf::start_uma();
+
     if (size > 0xFFFFFFFFULL - 100) {
         LOG(FATAL) << "data_size=" << size << " is too large";
         return -1;
     }
-    char* mem = (char*)malloc(sizeof(IOBuf::Block) + sizeof(UserDataExtension));
-    if (mem == NULL) {
+    auto blk_mem = uma_zalloc(iobuf::block_zone, 0);
+    if (blk_mem == NULL) {
         return -1;
     }
+
     if (deleter == NULL) {
         deleter = (UserDataDeleter2) &free_wrapper;
     }
-    IOBuf::Block* b = new (mem) IOBuf::Block((char*)data, size, deleter, arg);
+    IOBuf::Block* b = new (blk_mem) IOBuf::Block((char*)data, size, deleter, arg);
     const IOBuf::BlockRef r = { 0, b->cap, b };
     _move_back_ref(r);
     return 0;
