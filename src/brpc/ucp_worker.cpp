@@ -433,28 +433,36 @@ ucs_status_t UcpWorker::DoAmCallback(
      const ucp_am_recv_param_t *param)
 {
     // assert(mutex_.is_locked_by_me());
-    MsgHeader *mh = (MsgHeader *)header;
-    if (mh == NULL) {
-        LOG(ERROR) << "header is NULL";
-        return UCS_OK;
-    } 
-    if (header_length < sizeof(*mh)) {
-        LOG(ERROR) << "header_length is less than " << sizeof(*mh);
-        return UCS_OK;
-    }
+
     if (!(param->recv_attr & UCP_AM_RECV_ATTR_FIELD_REPLY_EP)) {
         LOG(ERROR) << "UCP_AM_RECV_ATTR_FIELD_REPLY_EP not set";
-        return UCS_OK;
-    }
-    if (!(param->recv_attr & (UCP_AM_RECV_ATTR_FLAG_DATA |
-                              UCP_AM_RECV_ATTR_FLAG_RNDV))) {
-        LOG(ERROR) << "Neither UCP_AM_RECV_ATTR_FIELD_DATA nor UCP_AM_RECV_ATTR_FLAG_RNDV is set";
         return UCS_OK;
     }
 
     UcpConnectionRef conn = FindConnection(param->reply_ep);
     if (!conn) {
         LOG(ERROR) << "Can not find ep in conn_map_";
+        return UCS_OK;
+    }
+
+    MsgHeader *mh = (MsgHeader *)header;
+    if (mh == NULL) {
+        conn->ucp_code_.store(UCS_ERR_MESSAGE_TRUNCATED);
+        SetDataReadyLocked(conn);
+        LOG(ERROR) << "header is NULL";
+        return UCS_OK;
+    } 
+    if (header_length < sizeof(*mh)) {
+        conn->ucp_code_.store(UCS_ERR_MESSAGE_TRUNCATED);
+        SetDataReadyLocked(conn);
+        LOG(ERROR) << "header_length is less than " << sizeof(*mh);
+        return UCS_OK;
+    }
+    if (!(param->recv_attr & (UCP_AM_RECV_ATTR_FLAG_DATA |
+                              UCP_AM_RECV_ATTR_FLAG_RNDV))) {
+        conn->ucp_code_.store(UCS_ERR_MESSAGE_TRUNCATED);
+        SetDataReadyLocked(conn);
+        LOG(ERROR) << "Neither UCP_AM_RECV_ATTR_FIELD_DATA nor UCP_AM_RECV_ATTR_FLAG_RNDV is set";
         return UCS_OK;
     }
 
@@ -467,6 +475,8 @@ ucs_status_t UcpWorker::DoAmCallback(
     UcpAmMsg *msg = UcpAmMsg::Allocate();
     if (msg == NULL) {
         LOG(FATAL) << "can not allocate UcpMsg";
+        conn->ucp_code_.store(UCS_ERR_NO_MEMORY);
+        SetDataReadyLocked(conn);
         return UCS_OK;
     }
     msg->conn = conn;
