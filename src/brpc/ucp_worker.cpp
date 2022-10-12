@@ -60,14 +60,14 @@ DEFINE_bool(brpc_ucp_always_flush, false, "flush when disconnecting");
 #define NVME_MAX_ALIGN  512
 DEFINE_uint32(brpc_ucp_message_pad, NVME_SGL_ALIGN, "message pad size");
 
-static bool ValidatePad(const char* flagname, uint32_t value)
+static bool validate_pad(const char* flagname, uint32_t value)
 {
     if (value <= NVME_MAX_ALIGN && powerof2(value))
         return true;
     printf("Invalid value for --%s: %d\n", flagname, (int)value);
     return false;
 }
-DEFINE_validator(brpc_ucp_message_pad, &ValidatePad);
+DEFINE_validator(brpc_ucp_message_pad, &validate_pad);
 
 static void *alloc_trie_node(struct butil::pctrie *ptree)
 {
