@@ -53,8 +53,6 @@ static bool validate_err_mode(const char* flagname,
 
 static ucp_err_handling_mode_t get_error_mode(void)
 {
-    return UCP_ERR_HANDLING_MODE_NONE;
-
     if (!strcasecmp(FLAGS_brpc_ucp_error_mode.c_str(), "none")) {
         return UCP_ERR_HANDLING_MODE_NONE;
     }
