@@ -146,10 +146,12 @@ int UCP_Context::init()
     memset(&ucp_params, 0, sizeof(ucp_params));
     /* UCP initialization */
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES |
-                            UCP_PARAM_FIELD_MT_WORKERS_SHARED;
+                            UCP_PARAM_FIELD_MT_WORKERS_SHARED |
+                            UCP_PARAM_FIELD_NAME;
     ucp_params.features = UCP_FEATURE_AM |
                           UCP_FEATURE_WAKEUP;
     ucp_params.mt_workers_shared = 1;
+    ucp_params.name = "brpc-ucx";
 
     status = ucp_init(&ucp_params, config, &context_);
     if (status != UCS_OK) {
