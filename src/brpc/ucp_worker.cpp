@@ -434,46 +434,46 @@ ucs_status_t UcpWorker::DoAmCallback(
 {
     // assert(mutex_.is_locked_by_me());
 
-    if (!(param->recv_attr & UCP_AM_RECV_ATTR_FIELD_REPLY_EP)) {
+    if (BAIDU_UNLIKELY(!(param->recv_attr & UCP_AM_RECV_ATTR_FIELD_REPLY_EP))) {
         LOG(ERROR) << "UCP_AM_RECV_ATTR_FIELD_REPLY_EP not set";
         return UCS_OK;
     }
 
     UcpConnectionRef conn = FindConnection(param->reply_ep);
-    if (!conn) {
+    if (BAIDU_UNLIKELY(!conn)) {
         LOG(ERROR) << "Can not find ep in conn_map_";
         return UCS_OK;
     }
 
     MsgHeader *mh = (MsgHeader *)header;
-    if (mh == NULL) {
+    if (BAIDU_UNLIKELY(mh == NULL)) {
         conn->ucp_code_.store(UCS_ERR_MESSAGE_TRUNCATED);
         SetDataReadyLocked(conn);
         LOG(ERROR) << "header is NULL";
         return UCS_OK;
     } 
-    if (header_length < sizeof(*mh)) {
+    if (BAIDU_UNLIKELY(header_length < sizeof(*mh))) {
         conn->ucp_code_.store(UCS_ERR_MESSAGE_TRUNCATED);
         SetDataReadyLocked(conn);
         LOG(ERROR) << "header_length is less than " << sizeof(*mh);
         return UCS_OK;
     }
-    if (!(param->recv_attr & (UCP_AM_RECV_ATTR_FLAG_DATA |
-                              UCP_AM_RECV_ATTR_FLAG_RNDV))) {
+    if (BAIDU_UNLIKELY(!(param->recv_attr & (UCP_AM_RECV_ATTR_FLAG_DATA |
+                         UCP_AM_RECV_ATTR_FLAG_RNDV)))) {
         conn->ucp_code_.store(UCS_ERR_MESSAGE_TRUNCATED);
         SetDataReadyLocked(conn);
         LOG(ERROR) << "Neither UCP_AM_RECV_ATTR_FIELD_DATA nor UCP_AM_RECV_ATTR_FLAG_RNDV is set";
         return UCS_OK;
     }
 
-    if (conn->state_ == UcpConnection::STATE_CLOSED) {
+    if (BAIDU_UNLIKELY(conn->state_ == UcpConnection::STATE_CLOSED)) {
         LOG(ERROR) << "Received am from" << conn->remote_side_str_
                    << " ,but connection was already closed";
         return UCS_OK;
     }
 
     UcpAmMsg *msg = UcpAmMsg::Allocate();
-    if (msg == NULL) {
+    if (BAIDU_UNLIKELY(msg == NULL)) {
         LOG(FATAL) << "can not allocate UcpMsg";
         conn->ucp_code_.store(UCS_ERR_NO_MEMORY);
         SetDataReadyLocked(conn);
@@ -520,6 +520,42 @@ void UcpWorker::RecycleWorkerData()
     }
 }
 
+static inline void remove_from_msg_q(UcpAmList *list, UcpAmMsg *msg)
+{
+#ifdef UCP_WORKER_Q_DEBUG
+    CHECK(msg->has_flag(AMF_MSG_Q)) << "not on msg queue";
+#endif
+    TAILQ_REMOVE(list, msg, link);
+    msg->clear_flag(AMF_MSG_Q);
+}
+
+static inline void insert_into_comp_q(UcpAmList *list, UcpAmMsg *msg)
+{
+#ifdef UCP_WORKER_Q_DEBUG
+    CHECK(!msg->has_flag(AMF_COMP_Q)) << "already on complete queue";
+#endif
+    TAILQ_INSERT_TAIL(list, msg, comp_link);
+    msg->set_flag(AMF_COMP_Q);
+}
+
+static inline void remove_from_comp_q(UcpAmList *list, UcpAmMsg *msg)
+{
+#ifdef UCP_WORKER_Q_DEBUG
+    CHECK(msg->has_flag(AMF_COMP_Q)) << "not on complete queue";
+#endif
+    TAILQ_REMOVE(list, msg, comp_link);
+    msg->clear_flag(AMF_COMP_Q);
+}
+
+static inline void remove_from_recv_q(UcpAmList *list, UcpAmMsg *msg)
+{
+#ifdef UCP_WORKER_Q_DEBUG
+    CHECK(msg->has_flag(AMF_RECV_Q)) << "not on receive queue";
+#endif
+    TAILQ_REMOVE(list, msg, link);
+    msg->clear_flag(AMF_RECV_Q);
+}
+
 void UcpWorker::DispatchAmMsgQ()
 {
     UcpAmMsg *msg, *elem;
@@ -540,9 +576,7 @@ void UcpWorker::DispatchAmMsgQ()
 
     while (!TAILQ_EMPTY(&tmp_list)) {
         msg = TAILQ_FIRST(&tmp_list);
-        CHECK(msg->has_flag(AMF_MSG_Q)) << "not on msg queue";
-        TAILQ_REMOVE(&tmp_list, msg, link);
-        msg->clear_flag(AMF_MSG_Q);
+        remove_from_msg_q(&tmp_list, msg);
         UcpConnectionRef conn = msg->conn;
         if (!msg->has_flag(AMF_RNDV)) {
             if (msg->length >= sizeof(void *)) {
@@ -585,7 +619,9 @@ void UcpWorker::DispatchAmMsgQ()
         msg->req = ucp_am_recv_data_nbx(ucp_worker_,
                         msg->desc, buf, len, &param);
 request_done:
+#ifdef UCP_WORKER_Q_DEBUG
         CHECK(!msg->has_flag(AMF_RECV_Q)) << "already on receive queue";
+#endif
         TAILQ_FOREACH_REVERSE(elem, &conn->recv_q_, UcpAmList, link) {
             if (msg->header.sn > elem->header.sn) {
                 TAILQ_INSERT_AFTER(&conn->recv_q_, elem, msg, link);
@@ -601,13 +637,11 @@ request_done:
 
         if (msg->req == nullptr) {
             msg->code = UCS_OK;
-            TAILQ_INSERT_TAIL(&recv_comp_q_, msg, comp_link);
-            msg->set_flag(AMF_COMP_Q);
+            insert_into_comp_q(&recv_comp_q_, msg);
         } else if (UCS_PTR_IS_ERR(msg->req)) {
             ucs_status_t st = UCS_PTR_STATUS(msg->req);
             msg->code = st;
-            TAILQ_INSERT_TAIL(&recv_comp_q_, msg, comp_link);
-            msg->set_flag(AMF_COMP_Q);
+            insert_into_comp_q(&recv_comp_q_, msg);
             LOG(INFO) << "Failed to call ucp_am_recv_nbx (" << ucs_status_string(st) << ")";
         }
     }
@@ -626,12 +660,12 @@ void UcpWorker::DoAmRecvCallback(UcpAmMsg *msg, ucs_status_t status,
     // assert(mutex_.is_locked_by_me());
     ucp_request_free(msg->req);
     msg->code = status;
-    CHECK(msg->length == length) << "strange, length not equal, expect "
-                                 << msg->length << ", actual " << length;
-    CHECK(!msg->has_flag(AMF_COMP_Q)) << "Already on complete queue";
-    TAILQ_INSERT_TAIL(&recv_comp_q_, msg, comp_link);
-    msg->set_flag(AMF_COMP_Q);
-    if (status != UCS_OK) {
+    if (BAIDU_UNLIKELY(msg->length != length)) {
+        LOG(WARNING) << "strange, length not equal, expect "
+                     << msg->length << ", actual " << length;
+    }
+    insert_into_comp_q(&recv_comp_q_, msg);
+    if (BAIDU_UNLIKELY(status != UCS_OK)) {
         LOG(ERROR ) << "Receive with error ("
                     << ucs_status_string(status) << ")"
                     << " from " << msg->conn->remote_side_str_;
@@ -654,12 +688,12 @@ void UcpWorker::DispatchRecvCompQ()
         UcpAmMsg *msg = TAILQ_FIRST(&tmp_list);
         UcpConnectionRef conn = msg->conn;
 
+#ifdef UCP_WORKER_Q_DEBUG
         CHECK(!msg->has_flag(AMF_FINISH)) << "finish should not set";
+#endif
         msg->set_flag(AMF_FINISH);
 
-        CHECK(msg->has_flag(AMF_COMP_Q)) << "not on complete queue";
-        TAILQ_REMOVE(&tmp_list, msg, comp_link);
-        msg->clear_flag(AMF_COMP_Q);
+        remove_from_comp_q(&tmp_list, msg);
 
         if (msg->code == UCS_OK) {
             if (msg->has_flag(AMF_RNDV))
@@ -668,9 +702,7 @@ void UcpWorker::DispatchRecvCompQ()
 
         bool avail = false;
         if (out_of_order_) {
-            CHECK(msg->has_flag(AMF_RECV_Q)) << "not on receive queue";
-            TAILQ_REMOVE(&conn->recv_q_, msg, link);
-            msg->clear_flag(AMF_RECV_Q);
+            remove_from_recv_q(&conn->recv_q_, msg);
             SaveInputMessage(conn, msg); 
             avail = true;
         } else {
@@ -699,10 +731,9 @@ bool UcpWorker::CheckConnRecvQ(const UcpConnectionRef& conn)
         if (msg->header.sn != conn->expect_sn_)
             break;
         avail = true;
-        CHECK(msg->has_flag(AMF_RECV_Q)) << "not on receive queue";
         CHECK(!msg->has_flag(AMF_COMP_Q)) << "still on complete queue";
-        TAILQ_REMOVE(&conn->recv_q_, msg, link);
-        msg->clear_flag(AMF_RECV_Q);
+
+        remove_from_recv_q(&conn->recv_q_, msg);
 
         SaveInputMessage(conn, msg);
         conn->expect_sn_++;

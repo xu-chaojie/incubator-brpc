@@ -67,6 +67,13 @@ void UcpAmMsg::Release(UcpAmMsg *o)
     o->nvec = 0;
     o->code = UCS_OK;
     o->req = nullptr;
+
+#ifdef UCP_WORKER_Q_DEBUG
+    CHECK(!o->has_flag(AMF_MSG_Q)) << "still on msg q";
+    CHECK(!o->has_flag(AMF_RECV_Q)) << "still on receive q";
+    CHECK(!o->has_flag(AMF_COMP_Q)) << "still on complete q";
+#endif
+ 
     o->flags = 0;
     o->buf.clear();
     if (o->iov.size() > FLAGS_brpc_ucp_iov_reserve) {
