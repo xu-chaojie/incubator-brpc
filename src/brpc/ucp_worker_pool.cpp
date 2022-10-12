@@ -15,8 +15,8 @@
 // Authors: Xu Yifeng @ netease
 
 #include "ucp_worker_pool.h"
-#include "butil/logging.h"
 #include "bthread/bthread.h"
+#include "butil/logging.h"
 
 #include <mutex>
 

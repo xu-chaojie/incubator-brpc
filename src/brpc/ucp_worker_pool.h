@@ -17,11 +17,12 @@
 #ifndef BRPC_UCP_WORKER_POOL_H
 #define BRPC_UCP_WORKER_POOL_H
 
+#include "ucp_worker.h"
+
 #include "butil/macros.h"
 #include "butil/atomicops.h"
 #include "bthread/mutex.h"
 #include "bthread/condition_variable.h"
-#include "ucp_worker.h"
 
 #include <vector>
 

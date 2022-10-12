@@ -14,21 +14,20 @@
 
 // Authors: Xu Yifeng
 
-#include "butil/logging.h"
-#include "butil/pctrie.h"
-#include "bthread/unstable.h"
-#include "ucs/sys/sock.h"
-
 #include "brpc/ucp_ctx.h"
 #include "brpc/ucp_worker.h"
 
-#include <gflags/gflags.h>
+#include "bthread/unstable.h"
+#include "butil/logging.h"
+#include "butil/pctrie.h"
 
-#include <sys/param.h>
+#include <ucs/sys/sock.h>
+#include <gflags/gflags.h>
 #include <endian.h>
 #include <limits.h>
 #include <poll.h>
 #include <stdlib.h>
+#include <sys/param.h>
 #include <sys/time.h>
 
 #define AM_ID  0
