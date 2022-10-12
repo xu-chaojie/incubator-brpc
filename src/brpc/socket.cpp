@@ -327,7 +327,11 @@ struct BAIDU_CACHELINE_ALIGNMENT Socket::WriteRequest {
     WriteRequest* next;
     bthread_id_t id_wait;
     Socket* socket;
-    
+    union {
+      size_t attachment_off;
+      char pad[64];
+    };
+
     uint32_t pipelined_count() const {
         return (_pc_and_udmsg >> 48) & 0x7FFF;
     }
@@ -1666,6 +1670,7 @@ int Socket::Write(SocketMessagePtr<>& msg, const WriteOptions* options_in) {
 }
 
 int Socket::StartWrite(WriteRequest* req, const WriteOptions& opt) {
+    req->attachment_off = opt.attachment_off;
     // Release fence makes sure the thread getting request sees *req
     WriteRequest* const prev_head =
         _write_head.exchange(req, butil::memory_order_release);
@@ -1703,7 +1708,7 @@ int Socket::StartWrite(WriteRequest* req, const WriteOptions& opt) {
     // which is assumed to run before any SocketMessage.AppendAndDestroySelf()
     // in some protocols(namely RTMP).
     req->Setup(this);
-    
+    req->attachment_off = opt.attachment_off;
     if (ssl_state() != SSL_OFF) {
         // Writing into SSL may block the current bthread, always write
         // in the background.
@@ -1717,7 +1722,7 @@ int Socket::StartWrite(WriteRequest* req, const WriteOptions& opt) {
         nw = _conn->CutMessageIntoFileDescriptor(fd(), data_arr, 1);
     } else {
         if (is_ucp_connection())
-            nw = _ucp_conn->Write(&req->data);
+            nw = _ucp_conn->Write(&req->data, req->attachment_off);
         else
             nw = req->data.cut_into_file_descriptor(fd());
     }
@@ -1839,9 +1844,11 @@ void* Socket::KeepWrite(void* void_arg) {
 ssize_t Socket::DoWrite(WriteRequest* req) {
     // Group butil::IOBuf in the list into a batch array.
     butil::IOBuf* data_list[DATA_LIST_MAX];
+    size_t attachment_off_list[DATA_LIST_MAX];
     size_t ndata = 0;
     for (WriteRequest* p = req; p != NULL && ndata < DATA_LIST_MAX;
          p = p->next) {
+        attachment_off_list[ndata] = p->attachment_off;
         data_list[ndata++] = &p->data;
     }
 
@@ -1852,7 +1859,7 @@ ssize_t Socket::DoWrite(WriteRequest* req) {
         } else {
             ssize_t nw;
             if (is_ucp_connection()) {
-                nw = _ucp_conn->Write(data_list, ndata);
+                nw = _ucp_conn->Write(data_list, attachment_off_list, ndata);
             } else {
                 nw = butil::IOBuf::cut_multiple_into_file_descriptor(
                     fd(), data_list, ndata);
@@ -2741,7 +2748,7 @@ int Socket::PeekAgentSocket(SocketUniquePtr* out) const {
 
 void Socket::GetStat(SocketStat* s) const {
     BAIDU_CASSERT(offsetof(Socket, _preferred_index) >= 64, different_cacheline);
-    BAIDU_CASSERT(sizeof(WriteRequest) == 64, sizeof_write_request_is_64);
+    BAIDU_CASSERT(sizeof(WriteRequest) == 128, sizeof_write_request_is_128);
 
     SharedPart* sp = GetSharedPart();
     if (sp != NULL && sp->extended_stat != NULL) {

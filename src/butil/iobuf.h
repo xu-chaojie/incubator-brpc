@@ -175,10 +175,8 @@ public:
     // and the ssl error code will be filled into `ssl_error'
     ssize_t cut_into_SSL_channel(struct ssl_st* ssl, int* ssl_error);
 
-    // Return number of total bytes
-    ssize_t fill_ucp_iov(iobuf_ucp_iov_t *iov, int max_vec,
-                         int *real_nvec,
-                         size_t size_hint = 1024 * 1024);
+    // Return number of newly added iovec, *vec_off is updated to new position
+    int fill_ucp_iov(iobuf_ucp_iov_t *_vec, int *vec_off, size_t max_bytes);
 
     // Cut `count' number of `pieces' into the writer.
     // Returns bytes cut on success, -1 otherwise and errno is set.

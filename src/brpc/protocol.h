@@ -98,6 +98,7 @@ struct Protocol {
     // Call cntl->SetFailed() on error.
     typedef void (*PackRequest)(
         butil::IOBuf* iobuf_out,
+        size_t *attachment_off,
         SocketMessage** user_message_out,
         uint64_t correlation_id,
         const google::protobuf::MethodDescriptor* method,

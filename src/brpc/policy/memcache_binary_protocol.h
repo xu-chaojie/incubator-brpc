@@ -37,6 +37,7 @@ void SerializeMemcacheRequest(butil::IOBuf* buf,
 
 // Pack `request' to `method' into `buf'.
 void PackMemcacheRequest(butil::IOBuf* buf,
+                         size_t *attachment_off,
                          SocketMessage**,
                          uint64_t correlation_id,
                          const google::protobuf::MethodDescriptor* method,

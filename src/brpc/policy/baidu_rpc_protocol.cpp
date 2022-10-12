@@ -617,6 +617,7 @@ void ProcessRpcResponse(InputMessageBase* msg_base) {
 }
 
 void PackRpcRequest(butil::IOBuf* req_buf,
+                    size_t *attachment_off,
                     SocketMessage**,
                     uint64_t correlation_id,
                     const google::protobuf::MethodDescriptor* method,
@@ -675,7 +676,9 @@ void PackRpcRequest(butil::IOBuf* req_buf,
 
     SerializeRpcHeaderAndMeta(req_buf, meta, req_size + attached_size);
     req_buf->append(request_body);
+    *attachment_off = 0;
     if (attached_size) {
+        *attachment_off = req_buf->length();
         req_buf->append(cntl->request_attachment());
     }
 }

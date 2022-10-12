@@ -51,6 +51,7 @@ DEFINE_int32(brpc_ucp_worker_poll_time, 60, "Polling duration in microseconds)")
 DEFINE_int32(brpc_ucp_worker_poll_yield, 0, "Thread yields after accumulated so many polling loops");
 DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
 DEFINE_bool(brpc_ucp_always_flush, false, "flush when disconnecting");
+DEFINE_uint32(brpc_ucp_message_pad, 512, "message pad size");
 
 static void *alloc_trie_node(struct butil::pctrie *ptree)
 {
@@ -73,7 +74,7 @@ public:
         : conn(c), msg(m) {}
     virtual void do_request(int fd_or_id) {
         butil::IOBuf buf(butil::IOBuf::Movable(msg->buf));
-        conn->worker_->StartSend(UCP_CMD_PONG, conn.get(), &buf);
+        conn->worker_->StartSend(UCP_CMD_PONG, conn.get(), &buf, 0);
         UcpAmMsg::Release(msg);
         msg = NULL;
     }
@@ -118,6 +119,7 @@ UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
     // pctrie to perform lookup, it should be faster than
     // STL map which may be a red-black tree.
     butil::pctrie_init(&conn_map_);
+    CHECK(pad_buf_.resize(8192) == 0);
 }
 
 UcpWorker::~UcpWorker()
@@ -398,12 +400,6 @@ again:
             << ucs_status_string(stat) << ")";
     }
     worker_active_.store(0, std::memory_order_relaxed);
-}
-
-static void MsgHeaderIn(MsgHeader *host, MsgHeader *net)
-{
-    host->cmd = le32toh(net->cmd);
-    host->sn = le64toh(net->sn);
 }
 
 static inline void MsgHeaderIn(MsgHeader *host, const MsgHeader *net)
@@ -698,6 +694,9 @@ void UcpWorker::DispatchRecvCompQ()
         if (msg->code == UCS_OK) {
             if (msg->has_flag(AMF_RNDV))
                 msg->buf.append_from_buffer(msg->length);
+            /* Remove pad bytes */
+            if (msg->header.pad)
+                msg->buf.pop_front(msg->header.pad);
         }
 
         bool avail = false;
@@ -1094,14 +1093,16 @@ bool UcpWorker::KeepSendRequest(void)
     return true;
 }
 
-ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn, butil::IOBuf *buf)
+ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn, butil::IOBuf *buf,
+    size_t attachment_off)
 {
     butil::IOBuf *data_list[1] = {buf};
-    return StartSend(cmd, conn, data_list, 1);
+    return StartSend(cmd, conn, data_list, &attachment_off, 1);
 }
 
 ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn,
-    butil::IOBuf *data_list[], int ndata)
+    butil::IOBuf * const data_list[], size_t const attachment_off_list[],
+    int ndata)
 {
     BAIDU_SCOPED_LOCK(conn->send_mutex_);
 
@@ -1127,14 +1128,20 @@ ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn,
             err = ENOMEM;
             break;
         }
+        size_t attach_off = attachment_off_list[i];
+        int to_pad = FLAGS_brpc_ucp_message_pad -
+                (attach_off & (FLAGS_brpc_ucp_message_pad - 1));
         msg->conn = conn;
         header.cmd = cmd;
-        header.pad = 0;
+        header.pad = to_pad;
         header.sn = conn->next_send_sn_;
         MsgHeaderOut(&header, &msg->header);
         msg->buf.append(butil::IOBuf::Movable(*data_list[i]));
-        msg->buf.fill_ucp_iov(&msg->iov, INT_MAX,
-                              &msg->nvec, ULONG_MAX);
+        msg->nvec = 0;
+        if (to_pad) {
+            pad_buf_.fill_ucp_iov(&msg->iov, &msg->nvec, to_pad);
+        }
+        msg->buf.fill_ucp_iov(&msg->iov, &msg->nvec, ULONG_MAX);
         total += msg->buf.length();
         batch[batch_num++] = msg;
         if (batch_num == BATCH_SEND_SIZE) {

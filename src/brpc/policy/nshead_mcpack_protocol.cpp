@@ -150,12 +150,14 @@ void SerializeNsheadMcpackRequest(butil::IOBuf* buf, Controller* cntl,
 }
 
 void PackNsheadMcpackRequest(butil::IOBuf* buf,
+                             size_t *attachment_off,
                              SocketMessage**,
                              uint64_t correlation_id,
                              const google::protobuf::MethodDescriptor*,
                              Controller* controller,
                              const butil::IOBuf& request,
                              const Authenticator* /*not supported*/) {
+    *attachment_off = 0;
     ControllerPrivateAccessor accessor(controller);
     if (controller->connection_type() == CONNECTION_TYPE_SINGLE) {
         return controller->SetFailed(

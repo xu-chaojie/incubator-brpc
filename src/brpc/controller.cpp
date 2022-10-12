@@ -1102,8 +1102,9 @@ void Controller::IssueRPC(int64_t start_realtime_us) {
     // Make request
     butil::IOBuf packet;
     SocketMessage* user_packet = NULL;
-    _pack_request(&packet, &user_packet, cid.value, _method, this,
-                  _request_buf, using_auth);
+    size_t attachment_off = 0;
+    _pack_request(&packet, &attachment_off, &user_packet, cid.value, _method,
+                  this, _request_buf, using_auth);
     // TODO: PackRequest may accept SocketMessagePtr<>?
     SocketMessagePtr<> user_packet_guard(user_packet);
     if (FailedInline()) {
@@ -1134,6 +1135,7 @@ void Controller::IssueRPC(int64_t start_realtime_us) {
     wopt.pipelined_count = _pipelined_count;
     wopt.with_auth = has_flag(FLAGS_REQUEST_WITH_AUTH);
     wopt.ignore_eovercrowded = has_flag(FLAGS_IGNORE_EOVERCROWDED);
+    wopt.attachment_off = attachment_off;
     int rc;
     size_t packet_size = 0;
     if (user_packet_guard) {

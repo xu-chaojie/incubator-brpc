@@ -74,8 +74,10 @@ private:
     void InvokeExternalEvents();
     void CheckExitingEp();
     ssize_t StartRecv(UcpConnection *conn);
-    ssize_t StartSend(int cmd, UcpConnection *conn, butil::IOBuf *buf);
-    ssize_t StartSend(int cmd, UcpConnection *conn, butil::IOBuf *buf[], int ndata);
+    ssize_t StartSend(int cmd, UcpConnection *conn, butil::IOBuf *buf,
+        size_t attachment_off);
+    ssize_t StartSend(int cmd, UcpConnection *conn, butil::IOBuf * const buf[],
+        size_t const attachment_off_list[], int ndata);
     void DispatchDataReady();
     void SetDataReady(const UcpConnectionRef & conn);
     void SetDataReadyLocked(const UcpConnectionRef & conn);
@@ -113,6 +115,7 @@ private:
     UcpConnectionRef FindConnection(const ucp_ep_h ep);
 
 private:
+    butil::IOBuf pad_buf_;
     bthread::Mutex mutex_ BAIDU_CACHELINE_ALIGNMENT;
 
     std::list<EventCallbackRef> external_events_;

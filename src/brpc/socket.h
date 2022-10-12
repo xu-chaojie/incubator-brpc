@@ -240,10 +240,14 @@ public:
         // Default: false
         bool ignore_eovercrowded;
 
+        // attachment offset for rdma
+        size_t attachment_off;
+
         WriteOptions()
             : id_wait(INVALID_BTHREAD_ID), abstime(NULL)
             , pipelined_count(0), with_auth(false)
-            , ignore_eovercrowded(false) {}
+            , ignore_eovercrowded(false)
+            , attachment_off(0) {}
     };
     int Write(butil::IOBuf *msg, const WriteOptions* options = NULL);
     

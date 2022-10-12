@@ -130,8 +130,8 @@ public:
     void SetSocketId(SocketId id);
     SocketId GetSocketId() const;
     ssize_t Read(butil::IOBuf *out, size_t n); 
-    ssize_t Write(butil::IOBuf *buf); 
-    ssize_t Write(butil::IOBuf *data_list[], int ndata);
+    ssize_t Write(butil::IOBuf *buf, size_t attachment_off); 
+    ssize_t Write(butil::IOBuf *data_list[], size_t attachment_off_list[], int ndata);
     int Ping(const timespec* abstime);
 
     void *operator new(size_t);

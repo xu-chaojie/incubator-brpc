@@ -125,6 +125,7 @@ void SerializeHttpRequest(butil::IOBuf* request_buf,
                           Controller* cntl,
                           const google::protobuf::Message* msg);
 void PackHttpRequest(butil::IOBuf* buf,
+                     size_t *attachment_off,
                      SocketMessage** user_message_out,
                      uint64_t correlation_id,
                      const google::protobuf::MethodDescriptor* method,

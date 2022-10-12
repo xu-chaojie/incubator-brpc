@@ -624,12 +624,14 @@ void ProcessHuluResponse(InputMessageBase* msg_base) {
 }
 
 void PackHuluRequest(butil::IOBuf* req_buf,
+                     size_t *attachment_off,
                      SocketMessage**,
                      uint64_t correlation_id,
                      const google::protobuf::MethodDescriptor* method,
                      Controller* cntl,
                      const butil::IOBuf& req_body,
                      const Authenticator* auth) {
+    *attachment_off = 0;
     HuluRpcRequestMeta meta;
     if (auth != NULL && auth->GenerateCredential(
                 meta.mutable_credential_data()) != 0) {

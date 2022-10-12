@@ -263,15 +263,16 @@ ssize_t UcpConnection::Read(butil::IOBuf *out, size_t size_hint)
     return rc;
 }
 
-ssize_t UcpConnection::Write(butil::IOBuf *buf)
+ssize_t UcpConnection::Write(butil::IOBuf *buf, size_t attachment_off)
 {
     butil::IOBuf *data_list[1];
     data_list[0] = buf;
 
-    return Write(data_list, 1);
+    return Write(data_list, &attachment_off, 1);
 }
 
-ssize_t UcpConnection::Write(butil::IOBuf *data_list[], int ndata)
+ssize_t UcpConnection::Write(butil::IOBuf *data_list[],
+    size_t attachment_off_list[], int ndata)
 {
     bthread::v2::rlock_guard g(mutex_);
 
@@ -285,7 +286,8 @@ ssize_t UcpConnection::Write(butil::IOBuf *data_list[], int ndata)
         return -1;
     }
 
-    ssize_t len = worker_->StartSend(UCP_CMD_BRPC, this, data_list, ndata);
+    ssize_t len = worker_->StartSend(UCP_CMD_BRPC, this, data_list,
+        attachment_off_list, ndata);
     if (ucp_code_.load()) {
         errno = ECONNRESET;
         return -1;
@@ -332,7 +334,7 @@ int UcpConnection::DoPing(const timespec* abstime)
     int old = ping_seq_;
     ping_mutex_.unlock();
 
-    ssize_t rc = worker_->StartSend(UCP_CMD_PING, this, &buf);
+    ssize_t rc = worker_->StartSend(UCP_CMD_PING, this, &buf, 0);
     if (rc == -1) {
         return -1;
     }

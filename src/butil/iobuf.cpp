@@ -1088,34 +1088,34 @@ int IOBuf::_cut_by_delim(IOBuf* out, char const* dbegin, size_t ndelim) {
     return -1;
 }
 
-ssize_t IOBuf::fill_ucp_iov(iobuf_ucp_iov_t *_vec, int max_vec,
-    int *real_nvec, size_t size_hint) {
-    if (empty()) {
-        if (real_nvec)
-            *real_nvec = 0;
+/*
+ * Fill iovec with block pointer
+ * Return: number of iovec filled
+ */
+int IOBuf::fill_ucp_iov(iobuf_ucp_iov_t *_vec, int *vec_off, size_t max_bytes)
+{
+    if (empty())
         return 0;
-    }
 
     iobuf_ucp_iov_t &vec = *_vec;
-    const int nref = std::min((int)_ref_num(), max_vec);
-    int nvec = 0;
-    size_t cur_len = 0;
+    const int nref = _ref_num();
+    size_t total = 0;
+    vec.reserve(*vec_off + nref);
+    int idx = *vec_off;
+    for (int i = 0; i < nref; ++i) {
+        if (total >= max_bytes)
+            break;
+        IOBuf::BlockRef const& r = _ref_at(i);
+        if (vec.size() < (size_t)idx+1)
+            vec.resize(idx+1);
+        vec[idx].buffer = r.block->data + r.offset;
+        vec[idx].length = std::min((size_t)r.length, max_bytes - total);
+        total += vec[idx].length;
+        ++idx;
+    }
 
-    vec.reserve(nref);
-
-    do {
-        IOBuf::BlockRef const& r = _ref_at(nvec);
-        if (vec.size() < (size_t)nvec+1)
-            vec.resize(nvec+1);
-        vec[nvec].buffer = r.block->data + r.offset;
-        vec[nvec].length = r.length;
-        ++nvec;
-        cur_len += r.length;
-    } while (nvec < nref && cur_len < size_hint);
-
-    if (real_nvec)
-        *real_nvec = nvec;
-    return cur_len;
+    *vec_off = idx;
+    return nref;
 }
 
 // Since cut_into_file_descriptor() allocates iovec on stack, IOV_MAX=1024
