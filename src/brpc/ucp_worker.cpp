@@ -470,6 +470,12 @@ ucs_status_t UcpWorker::DoAmCallback(
         LOG(ERROR) << "header_length is less than " << sizeof(*mh);
         return UCS_OK;
     }
+    if (BAIDU_UNLIKELY(le32toh(mh->cmd) > UCP_CMD_MAX)) {
+        conn->ucp_code_.store(UCS_ERR_INVALID_PARAM);
+        SetDataReadyLocked(conn);
+        LOG(ERROR) << "Unknown command id: " << le32toh(mh->cmd);
+        return UCS_OK;
+    }
     if (BAIDU_UNLIKELY(!(param->recv_attr & (UCP_AM_RECV_ATTR_FLAG_DATA |
                          UCP_AM_RECV_ATTR_FLAG_RNDV)))) {
         conn->ucp_code_.store(UCS_ERR_MESSAGE_TRUNCATED);

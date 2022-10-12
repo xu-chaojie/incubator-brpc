@@ -45,6 +45,7 @@ enum {
     UCP_CMD_BRPC,
     UCP_CMD_PING,
     UCP_CMD_PONG
+#define UCP_CMD_MAX UCP_CMD_PONG
 };
 
 struct MsgHeader {
