@@ -51,7 +51,23 @@ DEFINE_int32(brpc_ucp_worker_poll_time, 60, "Polling duration in microseconds)")
 DEFINE_int32(brpc_ucp_worker_poll_yield, 0, "Thread yields after accumulated so many polling loops");
 DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
 DEFINE_bool(brpc_ucp_always_flush, false, "flush when disconnecting");
-DEFINE_uint32(brpc_ucp_message_pad, 512, "message pad size");
+
+/*
+  接收端读写NVME SGL也许需要4字节对齐的地址，这通过在接收端总是提供4字节
+  对齐的接收缓冲区，并在发送端对attachment进行4字节对齐来达到。
+*/
+#define NVME_SGL_ALIGN  4
+#define NVME_MAX_ALIGN  512
+DEFINE_uint32(brpc_ucp_message_pad, NVME_SGL_ALIGN, "message pad size");
+
+static bool ValidatePad(const char* flagname, uint32_t value)
+{
+    if (value <= NVME_MAX_ALIGN && powerof2(value))
+        return true;
+    printf("Invalid value for --%s: %d\n", flagname, (int)value);
+    return false;
+}
+DEFINE_validator(brpc_ucp_message_pad, &ValidatePad);
 
 static void *alloc_trie_node(struct butil::pctrie *ptree)
 {
@@ -119,7 +135,7 @@ UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
     // pctrie to perform lookup, it should be faster than
     // STL map which may be a red-black tree.
     butil::pctrie_init(&conn_map_);
-    CHECK(pad_buf_.resize(8192) == 0);
+    CHECK(pad_buf_.resize(NVME_MAX_ALIGN) == 0);
 }
 
 UcpWorker::~UcpWorker()
@@ -1129,19 +1145,22 @@ ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn,
             break;
         }
         size_t attach_off = attachment_off_list[i];
-        int to_pad = FLAGS_brpc_ucp_message_pad -
+        int to_pad = 0;
+        msg->nvec = 0;
+        if (FLAGS_brpc_ucp_message_pad) {
+            to_pad = FLAGS_brpc_ucp_message_pad -
                 (attach_off & (FLAGS_brpc_ucp_message_pad - 1));
-        msg->conn = conn;
+            if (to_pad)
+                pad_buf_.fill_ucp_iov(&msg->iov, &msg->nvec, to_pad);
+        }
+        msg->buf.append(butil::IOBuf::Movable(*data_list[i]));
+        msg->buf.fill_ucp_iov(&msg->iov, &msg->nvec, ULONG_MAX);
         header.cmd = cmd;
         header.pad = to_pad;
         header.sn = conn->next_send_sn_;
         MsgHeaderOut(&header, &msg->header);
-        msg->buf.append(butil::IOBuf::Movable(*data_list[i]));
-        msg->nvec = 0;
-        if (to_pad) {
-            pad_buf_.fill_ucp_iov(&msg->iov, &msg->nvec, to_pad);
-        }
-        msg->buf.fill_ucp_iov(&msg->iov, &msg->nvec, ULONG_MAX);
+        msg->conn = conn;
+
         total += msg->buf.length();
         batch[batch_num++] = msg;
         if (batch_num == BATCH_SEND_SIZE) {
@@ -1153,7 +1172,7 @@ ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn,
     if (batch_num != 0) {
         SendRequest(batch, batch_num);
     }
- 
+
     if (pthread_self() != worker_tid_) {
         if (FLAGS_brpc_ucp_worker_busy_poll)
             goto out;
