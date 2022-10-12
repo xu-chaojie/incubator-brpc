@@ -49,8 +49,8 @@ enum {
 };
 
 struct MsgHeader {
-    int32_t cmd;
-    int32_t pad;
+    uint32_t cmd;
+    uint32_t pad;
     uint64_t sn;
 };
 
