@@ -179,7 +179,7 @@ int create_ucp_worker(ucp_context_h ucp_ctx, ucp_worker_h *ucp_worker,
                                 UCP_WORKER_PARAM_FIELD_NAME ;
     worker_params.name = name;
     worker_params.thread_mode = UCS_THREAD_MODE_SINGLE;
-    worker_params.am_alignment = 8; // FIXME, need sync with spdk
+    worker_params.am_alignment = BAIDU_CACHELINE_SIZE;
     if (events) {
         worker_params.field_mask |= UCP_WORKER_PARAM_FIELD_EVENTS;
         worker_params.events = events;
