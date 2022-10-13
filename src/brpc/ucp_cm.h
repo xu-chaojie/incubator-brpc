@@ -94,6 +94,8 @@ private:
     std::map<int, Fd0Item> fd_conns_0_;
     std::map<int, Fd1Item> fd_conns_1_;
 
+    DISALLOW_COPY_AND_ASSIGN(UcpCm);
+
     friend class Socket;
     friend class UcpConnection;
 };

@@ -79,6 +79,8 @@ public:
     virtual void AfterRevived(Socket*) override;
 
 private:
+    DISALLOW_COPY_AND_ASSIGN(UcpAcceptor);
+
     static void* CloseIdleConnections(void* arg);
     
     // Initialize internal structure. 

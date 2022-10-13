@@ -42,7 +42,7 @@ DEFINE_int32(brpc_set_cpu_latency, -1, "Set cpu latency in microseconds");
 DEFINE_string(brpc_ucp_error_mode, "none", "Ucp error mode(none,peer");
 DEFINE_validator(brpc_ucp_error_mode, &validate_err_mode);
 
-static UCP_Context *g_ucp_ctx;
+static UcpContext *g_ucp_ctx;
 static pthread_once_t g_ucp_ctx_init = PTHREAD_ONCE_INIT;
 
 static bool validate_err_mode(const char* flagname,
@@ -102,28 +102,28 @@ err_out:
 static void init_ucx_ctx() {
     LOG(INFO) << "Running with ucp library version: " << ucp_get_version_string();
 
-    g_ucp_ctx = new UCP_Context;
+    g_ucp_ctx = new UcpContext;
     if (g_ucp_ctx->init()) {
         abort();
     }
 }
 
-UCP_Context* get_or_create_ucp_ctx() {
+UcpContext* get_or_create_ucp_ctx() {
     pthread_once(&g_ucp_ctx_init, init_ucx_ctx);
     return g_ucp_ctx;
 }
 
-UCP_Context::UCP_Context()
+UcpContext::UcpContext()
 {
     context_ = NULL;
 }
 
-UCP_Context::~UCP_Context()
+UcpContext::~UcpContext()
 {
     fini();
 }
 
-void UCP_Context::fini()
+void UcpContext::fini()
 {
     if (context_) {
         ucp_cleanup(context_);
@@ -132,7 +132,7 @@ void UCP_Context::fini()
     }
 }
 
-int UCP_Context::init()
+int UcpContext::init()
 {
     ucp_params_t ucp_params;
     ucs_status_t status;

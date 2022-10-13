@@ -58,8 +58,6 @@ public:
     void operator delete(void *);
 
 private:
-    DISALLOW_COPY_AND_ASSIGN(UcpWorker);
-
     class PingHandler;
     class PongHandler;
 
@@ -158,6 +156,7 @@ private:
     std::atomic<int> wakeup_flag_;
     std::atomic<UcpAmSendInfo *>send_list_;
 
+    DISALLOW_COPY_AND_ASSIGN(UcpWorker);
     friend class UcpConnection;
 };
 

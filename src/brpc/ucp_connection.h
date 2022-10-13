@@ -190,6 +190,8 @@ private:
         char cacheline__[BAIDU_CACHELINE_SIZE];
     } BAIDU_CACHELINE_ALIGNMENT;
 
+    DISALLOW_COPY_AND_ASSIGN(UcpConnection);
+
     friend class UcpCm;
     friend class UcpWorker;
 };

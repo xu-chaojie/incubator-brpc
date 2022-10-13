@@ -44,7 +44,6 @@ public:
 private:
     DISALLOW_COPY_AND_ASSIGN(UcpWorkerPool);
 
-private:
     std::vector<UcpWorker*> workers_;
     bool started_;
     bthread::Mutex barrier_lock_;

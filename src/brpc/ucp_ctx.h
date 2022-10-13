@@ -25,10 +25,10 @@
 
 namespace brpc {
 
-class UCP_Context {
+class UcpContext {
 public:
-    UCP_Context();
-    ~UCP_Context();
+    UcpContext();
+    ~UcpContext();
 
     ucp_context_h context() const { return context_; }
     operator ucp_context_h() const { return context_; }
@@ -37,13 +37,13 @@ public:
     void fini();
 
 private:
-    DISALLOW_COPY_AND_ASSIGN(UCP_Context);
+    DISALLOW_COPY_AND_ASSIGN(UcpContext);
 
     ucp_context_h context_;
     butil::fd_guard cpu_latency_fd_;
 };
 
-UCP_Context* get_or_create_ucp_ctx();
+UcpContext* get_or_create_ucp_ctx();
 /* Simple wrappers for ucx */
 int create_ucp_worker(ucp_context_h ucp_ctx, ucp_worker_h *ucp_worker,
     int event, const char *name, int *efd);
