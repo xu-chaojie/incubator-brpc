@@ -26,6 +26,9 @@
 #include <string.h>
 #include <sys/socket.h>
 
+// 1. 为了在IO路径上减少时延，使用resource来分配UcpAmMsg和UcpAmSendInfo
+// 2. UcpConnection中的mutex只在关闭时使用wrlock, 其他部分使用rdlock
+
 namespace brpc {
 
 DEFINE_int32(brpc_ucp_ping_timeout, 10, "Number of seconds");
