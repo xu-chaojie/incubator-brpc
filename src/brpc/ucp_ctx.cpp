@@ -34,10 +34,15 @@ namespace brpc {
 static bool validate_err_mode(const char* flagname, const std::string& mode);
 
 DEFINE_int32(brpc_set_cpu_latency, -1, "Set cpu latency in microseconds");
+
+//
+// We default use error mode NONE because it is faster and BRPC is already
+// handling timeout correctly.
+//
 DEFINE_string(brpc_ucp_error_mode, "none", "Ucp error mode(none,peer");
 DEFINE_validator(brpc_ucp_error_mode, &validate_err_mode);
 
-UCP_Context *g_ucp_ctx;
+static UCP_Context *g_ucp_ctx;
 static pthread_once_t g_ucp_ctx_init = PTHREAD_ONCE_INIT;
 
 static bool validate_err_mode(const char* flagname,
@@ -59,32 +64,38 @@ static ucp_err_handling_mode_t get_error_mode(void)
     return UCP_ERR_HANDLING_MODE_PEER;
 }
 
-static int set_cpu_latency(int *fd)
-{
-    int err = 0;
-    const int latency = FLAGS_brpc_set_cpu_latency;
+//
+// Disable cpu power-saving mode may reduce DMA latency. If you don't
+// use busy-polling mode, you may turn off power-saving mode, normally
+// you should set it to C0 with --brpc_set_cpu_latency=0.
+// Note that the /dev/cpu_dma_latency can only be written by root,
+// otherwise you should chmod its access right for other people.
+//
 
-    *fd = -1;
+static int set_cpu_latency(void)
+{
+    const int latency = FLAGS_brpc_set_cpu_latency;
+    int err = 0;
+
     if (latency < 0)
-        return 0;
+        return -1;
 
     LOG(INFO) << "Setting cpu latency to " << latency << "us";
-    *fd = open("/dev/cpu_dma_latency", O_WRONLY | O_CLOEXEC);
-    if (*fd < 0) {
+    butil::fd_guard fd(open("/dev/cpu_dma_latency", O_WRONLY | O_CLOEXEC));
+    if (fd < 0) {
         err = errno;
         goto err_out;
     }
-    if (write(*fd, &latency, sizeof(latency)) != sizeof(latency)) {
+    if (write(fd, &latency, sizeof(latency)) != sizeof(latency)) {
         err = errno;
-        close(*fd);
         goto err_out;
     }
-    return 0;
+    return fd.release();
 
 err_out:
-    *fd = -1;
     LOG(ERROR) << "open /dev/cpu_dma_latency " << strerror(err)
                << " - need root permissions";
+    errno = err;
     return -1;
 }
 
@@ -105,7 +116,6 @@ UCP_Context* get_or_create_ucp_ctx() {
 UCP_Context::UCP_Context()
 {
     context_ = NULL;
-    cpu_latency_fd_ = -1;
 }
 
 UCP_Context::~UCP_Context()
@@ -118,10 +128,7 @@ void UCP_Context::fini()
     if (context_) {
         ucp_cleanup(context_);
         context_ = NULL;
-        if (cpu_latency_fd_ != -1) {
-            ::close(cpu_latency_fd_);
-            cpu_latency_fd_ = -1;
-        }
+        cpu_latency_fd_.release();
     }
 }
 
@@ -160,7 +167,8 @@ int UCP_Context::init()
     }
 
     if (ret == 0) {
-        (void)set_cpu_latency(&cpu_latency_fd_);
+        // Ignore error. Error setting latency is not a failure. 
+        cpu_latency_fd_.reset(set_cpu_latency());
     }
 
     return ret;

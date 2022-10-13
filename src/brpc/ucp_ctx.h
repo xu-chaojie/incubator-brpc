@@ -21,6 +21,7 @@
 
 #include "butil/macros.h"
 #include "butil/endpoint.h"
+#include "butil/fd_guard.h"
 
 namespace brpc {
 
@@ -39,7 +40,7 @@ private:
     DISALLOW_COPY_AND_ASSIGN(UCP_Context);
 
     ucp_context_h context_;
-    int cpu_latency_fd_;
+    butil::fd_guard cpu_latency_fd_;
 };
 
 UCP_Context* get_or_create_ucp_ctx();
