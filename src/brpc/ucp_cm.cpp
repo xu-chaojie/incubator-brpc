@@ -30,27 +30,33 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+//
+// UcpCM 创建的UcpConnection.
+// UcpConnection将以fd的方式返回，fd是一个pipe写端的句柄。
+// 使用fd的目的是因为socket很多方面用到fd，并且SocketOptions就是传递fd作为
+// 创建socket的参数。为了方便，固使用fd。
+// Socket层面只需要通过这个fd查询到UcpConnection对象，并使用这个对象的io接口。
+// 
 namespace brpc {
 
+// 系统一共有多少个Ucp Worker，基本上一个就够了。
 DEFINE_int32(brpc_ucp_workers, 1, "Number of ucp workers");
 
+static pthread_once_t g_ucp_cm_init = PTHREAD_ONCE_INIT;
 static UcpCm *g_cm;
-static std::mutex g_cm_mutex;
+
+static void init_cm(void)
+{
+    UcpCm *cm = new UcpCm;
+    int rc = cm->Start(FLAGS_brpc_ucp_workers);
+    CHECK(rc == 0) << "Failed to start ucp connection manager";
+    g_cm = cm;
+}
 
 UcpCm *
 get_or_create_ucp_cm(void)
 {
-    if (g_cm)
-        return g_cm;
-
-    BAIDU_SCOPED_LOCK(g_cm_mutex);
-    if (g_cm == NULL) {
-        UcpCm *cm = new UcpCm;
-        int rc = cm->Start(FLAGS_brpc_ucp_workers);
-        CHECK(rc == 0) << "Failed to start ucp connection manager";
-        __sync_synchronize();
-        g_cm = cm;
-    }
+    pthread_once(&g_ucp_cm_init, init_cm);
     return g_cm;
 }
 
