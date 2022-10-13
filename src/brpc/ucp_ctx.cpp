@@ -246,20 +246,6 @@ int create_ucp_ep(ucp_worker_h w, const butil::EndPoint &endpoint,
     saddr.sin_addr = endpoint.ip;
     saddr.sin_port = htons(endpoint.port);
 
-    /*
-     * Endpoint field mask bits:
-     * UCP_EP_PARAM_FIELD_FLAGS             - Use the value of the 'flags' field.
-     * UCP_EP_PARAM_FIELD_SOCK_ADDR         - Use a remote sockaddr to connect
-     *                                        to the remote peer.
-     * UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE - Error handling mode - this flag
-     *                                        is temporarily required since the
-     *                                        endpoint will be closed with
-     *                                        UCP_EP_CLOSE_MODE_FORCE which
-     *                                        requires this mode.
-     *                                        Once UCP_EP_CLOSE_MODE_FORCE is
-     *                                        removed, the error handling mode
-     *                                        will be removed.
-     */
     ep_params.field_mask       = UCP_EP_PARAM_FIELD_FLAGS       |
                                  UCP_EP_PARAM_FIELD_SOCK_ADDR   |
                                  UCP_EP_PARAM_FIELD_ERR_HANDLER |
