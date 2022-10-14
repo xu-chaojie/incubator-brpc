@@ -156,7 +156,7 @@ int UcpContext::init()
     ucp_params.features = UCP_FEATURE_AM |
                           UCP_FEATURE_WAKEUP;
     ucp_params.mt_workers_shared = 1;
-    ucp_params.name = "brpc-ucx";
+    ucp_params.name = "brpc";
 
     status = ucp_init(&ucp_params, config, &context_);
     if (status != UCS_OK) {
