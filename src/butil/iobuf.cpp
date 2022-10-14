@@ -412,7 +412,7 @@ namespace iobuf {
 static void do_start_uma()
 {
     iobuf_zone = uma_zcreate("iobuf", IOBuf::DEFAULT_BLOCK_SIZE,
-         NULL, NULL, NULL, NULL, UMA_ALIGN_PTR,
+         NULL, NULL, NULL, NULL, UMA_ALIGN_CACHE,
          UMA_ZONE_LARGE_KEG | UMA_ZONE_OFFPAGE);
     CHECK(iobuf_zone != NULL) << "cannot create iobuf_zone";
     block_zone = uma_zcreate("iobuf::block", sizeof(IOBuf::Block),
