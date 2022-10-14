@@ -148,8 +148,8 @@ int UcpContext::init()
     std::unique_ptr<ucp_config_t, decltype(&ucp_config_release)>
         config_ref(config, ucp_config_release);
 
-    memset(&ucp_params, 0, sizeof(ucp_params));
     /* UCP initialization */
+    memset(&ucp_params, 0, sizeof(ucp_params));
     ucp_params.field_mask = UCP_PARAM_FIELD_FEATURES |
                             UCP_PARAM_FIELD_MT_WORKERS_SHARED |
                             UCP_PARAM_FIELD_NAME;
