@@ -415,8 +415,10 @@ static void do_start_uma()
          NULL, NULL, NULL, NULL, UMA_ALIGN_CACHE,
          UMA_ZONE_LARGE_KEG | UMA_ZONE_OFFPAGE);
     CHECK(iobuf_zone != NULL) << "cannot create iobuf_zone";
+    uma_prealloc(iobuf_zone, 1000);
     block_zone = uma_zcreate("iobuf::block", sizeof(IOBuf::Block),
          NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
+    uma_prealloc(block_zone, 1000);
     CHECK(block_zone != NULL) << "cannot create block_zone";
     int rc;
     rc = iobuf_64K_cache.init(FLAGS_butil_iobuf_64K_max);
