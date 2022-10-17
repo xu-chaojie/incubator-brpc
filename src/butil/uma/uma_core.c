@@ -1080,7 +1080,7 @@ keg_small_init(uma_keg_t keg)
 		    PAGE_SIZE);
 	} else
 #endif
- {
+ 	{
 		slabsize = UMA_SLAB_SIZE;
 		keg->uk_ppera = 1;
 	}
