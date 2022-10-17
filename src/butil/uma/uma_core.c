@@ -67,11 +67,6 @@ typedef int bool;
 #define true 1
 #define false 0
 
-#define SIZE_2MB  (2 * 1024 * 1024)
-#define SIZE_64KB  (64 * 1024)
-int uma_large_ppera = SIZE_2MB / PAGE_SIZE;
-int uma_normal_ppera = SIZE_64KB / PAGE_SIZE;
-
 /*
  * TODO:
  *	- Improve memory usage for large allocations
@@ -256,17 +251,8 @@ static void uma_startup_impl(void);
 void uma_print_zone(uma_zone_t);
 void uma_print_stats(void);
 
-static inline void *uma_mmap(int flags, vm_size_t bytes)
+static inline void *uma_mmap(vm_size_t bytes)
 {
-	void *mem;
-
-	if (bytes >= SIZE_2MB) {
-		mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE,
-			MAP_PRIVATE|MAP_ANONYMOUS|flags, -1, 0);
-		if (mem != MAP_FAILED)
-			return mem;
-	}
-
 	return mmap(NULL, bytes, PROT_READ | PROT_WRITE,
 		MAP_PRIVATE|MAP_ANONYMOUS, -1, 0);
 }
@@ -447,9 +433,9 @@ zone_foreach_keg(uma_zone_t zone, void (*kegfn)(uma_keg_t))
 static void *
 uma_timeout(void *unused)
 {
+	bucket_enable();
 	for (;;) {
 		sleep(UMA_TIMEOUT);
-		bucket_enable();
 		zone_foreach(zone_timeout);
 	}
 	return 0;
@@ -1030,12 +1016,13 @@ startup_alloc(uma_zone_t zone, vm_size_t bytes, uint8_t *pflag, int wait)
 static void *
 page_alloc(uma_zone_t zone, vm_size_t bytes, uint8_t *pflag, int wait)
 {
-	int map_flags = 0;
+	void *p = 0;
+
 	*pflag = UMA_SLAB_KMEM;
-	if (bytes >= SIZE_2MB) {
-		map_flags |= MAP_HUGETLB;
-	}
-	return uma_mmap(map_flags, bytes);
+	p = uma_mmap(bytes);
+	if (p == MAP_FAILED)
+		return NULL;
+	return p;
 }
 
 /*
@@ -1093,11 +1080,7 @@ keg_small_init(uma_keg_t keg)
 		    PAGE_SIZE);
 	} else {
 		slabsize = UMA_SLAB_SIZE;
-		if (keg->uk_flags & UMA_ZONE_LARGE_KEG) {
-			keg->uk_ppera = uma_large_ppera;
-		} else {
-			keg->uk_ppera = uma_normal_ppera;
-		}
+		keg->uk_ppera = 1;
 	}
 
 	/*
@@ -1191,7 +1174,6 @@ static void
 keg_large_init(uma_keg_t keg)
 {
 	u_int shsize;
-	u_int alloc_unit;
 
 	KASSERT(keg != NULL, ("Keg is null in keg_large_init"));
 	KASSERT((keg->uk_flags & UMA_ZFLAG_CACHEONLY) == 0,
@@ -1199,14 +1181,8 @@ keg_large_init(uma_keg_t keg)
 	KASSERT((keg->uk_flags & UMA_ZONE_PCPU) == 0,
 	    ("%s: Cannot large-init a UMA_ZONE_PCPU keg", __func__));
 
-	if (keg->uk_flags & UMA_ZONE_LARGE_KEG) {
-		alloc_unit = uma_large_ppera;
-	} else {
-		alloc_unit = uma_normal_ppera;
-	}
-	keg->uk_ppera = howmany(
-	    MAX(keg->uk_size, alloc_unit * PAGE_SIZE), PAGE_SIZE);
-	keg->uk_ipers = (keg->uk_ppera * PAGE_SIZE) / keg->uk_size;
+	keg->uk_ppera = howmany(keg->uk_size, PAGE_SIZE);
+	keg->uk_ipers = 1;
 	keg->uk_rsize = keg->uk_size;
 
 	/* Check whether we have enough space to not do OFFPAGE. */
@@ -1323,7 +1299,7 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 	 * If we haven't booted yet we need allocations to go through the
 	 * startup cache until the vm is ready.
 	 */
-	if (keg->uk_ppera == uma_normal_ppera) {
+	if (keg->uk_ppera == 1) {
 		if (booted < UMA_STARTUP2)
 			keg->uk_allocf = startup_alloc;
 	} else if (booted < UMA_STARTUP2 &&
@@ -1419,7 +1395,7 @@ zone_ctor(void *mem, int size, void *udata, int flags)
 	keg = arg->keg;
 
 	ZONE_LOCK_INIT(zone, (arg->flags & UMA_ZONE_MTXCLASS));
-	for (sz = sizeof(struct uma_zone) - sizeof(struct uma_cache), cpu = 0;
+	for (sz = offsetof(struct uma_zone, uz_cpu), cpu = 0;
 	     sz < size; ++cpu, sz += sizeof(struct uma_cache))
 		uma_mtx_init(&zone->uz_cpu[cpu].uc_mtx, "uma cache mtx", "", 0);
 
@@ -1579,11 +1555,10 @@ zone_dtor(void *arg, int size, void *udata)
 	}
 	ZONE_LOCK_FINI(zone);
 
-	for (sz = sizeof(struct uma_zone) - sizeof(struct uma_cache), cpu = 0;
-	     sz < size; ++cpu, sz += sizeof(struct uma_cache))
+	for (sz = offsetof(struct uma_zone, uz_cpu), cpu = 0;
+	     sz < size; ++cpu, sz += sizeof(struct uma_cache)) {
 		uma_mtx_destroy(&zone->uz_cpu[cpu].uc_mtx);
-
-
+	}
 }
 
 /*
@@ -2341,6 +2316,7 @@ zfree_restart:
 	cpu = curcpu;
 	cache = &zone->uz_cpu[cpu];
 	CACHE_LOCK(cache);
+
 zfree_start:
 	/*
 	 * Try to free into the allocbucket first to give LIFO ordering
@@ -2380,8 +2356,8 @@ zfree_start:
 	}
 	cpu = curcpu;
 	cache = &zone->uz_cpu[cpu];
-
 	CACHE_LOCK(cache);
+
 	/*
 	 * Since we have locked the zone we may as well send back our stats.
 	 */
