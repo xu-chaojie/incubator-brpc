@@ -51,7 +51,6 @@
 #include "uma/malloc.h"
 #include "uma/systm.h"
 #include "uma/smp.h"
-#include "uma/pcpu.h"
 #include "uma/task.h"
 
 #include <strings.h>
@@ -1072,13 +1071,16 @@ keg_small_init(uma_keg_t keg)
 	u_int shsize;
 	u_int slabsize;
 
+#if 0
 	if (keg->uk_flags & UMA_ZONE_PCPU) {
 		u_int ncpus = (mp_maxid + 1) ? (mp_maxid + 1) : MAXCPU;
 
 		slabsize = sizeof(struct pcpu);
 		keg->uk_ppera = howmany(ncpus * sizeof(struct pcpu),
 		    PAGE_SIZE);
-	} else {
+	} else
+#endif
+ {
 		slabsize = UMA_SLAB_SIZE;
 		keg->uk_ppera = 1;
 	}
@@ -1094,10 +1096,6 @@ keg_small_init(uma_keg_t keg)
 	if (rsize & keg->uk_align)
 		rsize = (rsize & ~keg->uk_align) + (keg->uk_align + 1);
 	keg->uk_rsize = rsize;
-
-	KASSERT((keg->uk_flags & UMA_ZONE_PCPU) == 0 ||
-	    keg->uk_rsize < sizeof(struct pcpu),
-	    ("%s: size %u too large", __func__, keg->uk_rsize));
 
 	if (keg->uk_flags & UMA_ZONE_OFFPAGE)
 		shsize = 0;
@@ -2811,13 +2809,8 @@ void uma_zone_drain(uma_zone_t zone)
 static void
 uma_zero_item(void *item, uma_zone_t zone)
 {
-	int i;
 
-	if (zone->uz_flags & UMA_ZONE_PCPU) {
-		CPU_FOREACH(i)
-			bzero(zpcpu_get_cpu(item, i), zone->uz_size);
-	} else
-		bzero(item, zone->uz_size);
+	bzero(item, zone->uz_size);
 }
 
 void
