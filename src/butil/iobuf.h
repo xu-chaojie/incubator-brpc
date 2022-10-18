@@ -463,6 +463,11 @@ public:
     // Append data from inplace I/O buffer
     ssize_t append_from_buffer(size_t nr);
 
+    // Read at most `max_count' bytes from device file descriptor `fd' at a given
+    // offset and append to self. The file offset is not changed.
+    // If `offset' is negative, does exactly what append_from_file_descriptor does.
+    ssize_t pappend_from_dev_descriptor(int fd, off_t offset, size_t max_count);
+
     // Remove all data inside and return cached blocks.
     void clear();
 
@@ -475,6 +480,9 @@ public:
 
 private:
     static void return_cached_blocks_impl(Block*, bool);
+
+    ssize_t pappend_from_dev_descriptor_impl(int fd, off_t offset,
+            size_t max_count, bool *max_vec_hit);
 
     // Cached blocks for appending. Notice that the blocks are released
     // until return_cached_blocks()/clear()/dtor() are called, rather than
@@ -688,6 +696,30 @@ private:
     const butil::IOBuf* _buf;
 };
 
+namespace iobuf {
+typedef void* (*blockmem_allocate_t)(size_t align, size_t size);
+typedef void  (*blockmem_deallocate_t)(void*);
+
+typedef ssize_t (*iov_function)(int fd, const struct iovec *vector,
+                                   int count, off_t offset);
+
+typedef ssize_t (*iov_seq_function)(int fd, const struct iovec *vector,
+                                    int count);
+
+struct iobuf_io_funcs {
+	iov_function iof_preadv;
+	iov_function iof_pwritev;
+	iov_seq_function iof_readv;
+	iov_seq_function iof_writev;
+};
+
+void set_blockmem_allocate_and_deallocate(blockmem_allocate_t,
+	blockmem_deallocate_t);
+
+int set_external_io_funcs(struct iobuf_io_funcs funcs);
+
+void get_external_io_funcs(struct iobuf_io_funcs *funcs);
+}  // namespace iobuf
 }  // namespace butil
 
 // Specialize std::swap for IOBuf

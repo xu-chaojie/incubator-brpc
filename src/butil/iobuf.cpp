@@ -22,6 +22,7 @@
 #include <mesalink/openssl/err.h>
 #endif
 #include <sys/syscall.h>                   // syscall
+#include <sys/user.h>                      // For PAGE_SIZE
 #include <sys/mman.h>
 #include <fcntl.h>                         // O_RDONLY
 #include <errno.h>                         // errno
@@ -37,6 +38,7 @@
 #include "butil/iobuf.h"
 #include "butil/uma/uma/uma.h"
 #include "butil/uma/uma/time.h"
+#include "butil/uma/uma/malloc.h"	    // For M_ZERO
 #include "butil/lfstack.h"
 #include "bvar/bvar.h"
 
@@ -151,7 +153,7 @@ static ssize_t sys_pwritev(int fd, const struct iovec *vector,
     return syscall(SYS_pwritev, fd, vector, count, offset);
 }
 
-inline iov_function get_preadv_func() {
+inline iov_function get_sys_preadv_func() {
     butil::fd_guard fd(open("/dev/zero", O_RDONLY));
     if (fd < 0) {
         PLOG(WARNING) << "Fail to open /dev/zero";
@@ -171,7 +173,7 @@ inline iov_function get_preadv_func() {
     return sys_preadv;
 }
 
-inline iov_function get_pwritev_func() {
+inline iov_function get_sys_pwritev_func() {
     butil::fd_guard fd(open("/dev/null", O_WRONLY));
     if (fd < 0) {
         PLOG(ERROR) << "Fail to open /dev/null";
@@ -196,22 +198,113 @@ inline iov_function get_pwritev_func() {
 #warning "We don't check whether the kernel supports SYS_preadv or SYS_pwritev " \
          "when the arch is not X86_64, use user space preadv/pwritev directly"
 
-inline iov_function get_preadv_func() {
+inline iov_function get_sys_preadv_func() {
     return user_preadv;
 }
 
-inline iov_function get_pwritev_func() {
+inline iov_function get_sys_pwritev_func() {
     return user_pwritev;
 }
 
 #endif  // ARCH_CPU_X86_64
+
+iov_function external_preadv;
+iov_function external_pwritev;
+iov_seq_function external_readv;
+iov_seq_function external_writev;
+
+inline iov_function get_preadv_func() {
+    static iov_function sys_preadv_func = get_sys_preadv_func();
+    if (external_preadv)
+        return external_preadv;
+    return sys_preadv_func;
+}
+
+inline iov_function get_pwritev_func() {
+    static iov_function sys_pwritev_func = get_sys_pwritev_func();
+    if (external_pwritev)
+        return external_pwritev;
+    return sys_pwritev_func;
+}
+
+inline iov_seq_function get_readv_func() {
+    if (external_readv)
+        return external_readv;
+    return readv;
+}
+
+inline iov_seq_function get_writev_func() {
+    if (external_writev)
+        return external_writev;
+    return writev;
+}
+
+int set_external_io_funcs(struct iobuf_io_funcs funcs)
+{
+    if (funcs.iof_preadv == NULL ||
+        funcs.iof_pwritev == NULL ||
+        funcs.iof_readv == NULL ||
+        funcs.iof_writev == NULL) {
+	errno = EINVAL;
+        return -1;
+    }
+
+    external_pwritev = funcs.iof_pwritev;
+    external_preadv = funcs.iof_preadv;
+    external_writev = funcs.iof_writev;
+    external_readv = funcs.iof_readv;
+    return 0;
+}
+
+void get_external_io_funcs(struct iobuf_io_funcs *funcs)
+{
+    funcs->iof_pwritev = external_pwritev;
+    funcs->iof_preadv = external_preadv;
+    funcs->iof_writev = external_writev;
+    funcs->iof_readv = external_readv;
+}
 
 inline void* cp(void *__restrict dest, const void *__restrict src, size_t n) {
     // memcpy in gcc 4.8 seems to be faster enough.
     return memcpy(dest, src, n);
 }
 
-void *iobuf_malloc(size_t size)
+void *default_blockmem_allocate(size_t align, size_t size)
+{
+    return ::aligned_alloc(align, size);
+}
+
+void default_blockmem_deallocate(void *mem, size_t size)
+{
+    ::free(mem);
+}
+
+// Function pointers to allocate or deallocate memory for a IOBuf::Block
+static void* (*blockmem_allocate_hook)(size_t, size_t) = default_blockmem_allocate;
+static void  (*blockmem_deallocate_hook)(void*, size_t) = default_blockmem_deallocate;
+
+// Use default function pointers
+void reset_blockmem_allocate_and_deallocate() {
+    blockmem_allocate_hook = default_blockmem_allocate;
+    blockmem_deallocate_hook = default_blockmem_deallocate;
+}
+
+static void *iobuf_zone_allocate(uma_zone_t zone, vm_size_t size,
+    uint8_t *pflag, int wait)
+{
+    *pflag = 0;
+    void *p = blockmem_allocate_hook(PAGE_SIZE, size);
+    if (wait & M_ZERO)
+        memset(p, 0, size);
+    return p;
+}
+
+static void iobuf_zone_deallocate(void* mem, size_t size, uint8_t)
+{
+    blockmem_deallocate_hook(mem, size);
+}
+
+void *blockmem_allocate(size_t size)
 {
     start_uma();
     if (size == IOBuf::DEFAULT_BLOCK_SIZE)
@@ -225,14 +318,11 @@ void *iobuf_malloc(size_t size)
         if (buf) {
             return buf;
         }
-        buf = mmap(NULL, size, PROT_READ|PROT_WRITE, MAP_PRIVATE | MAP_ANON,
-                    -1, 0);
-        return buf;
     }
-    return ::malloc(size);
+    return blockmem_allocate_hook(PAGE_SIZE, size);
 }
 
-void iobuf_free(void *mem, size_t size)
+void blockmem_deallocate(void *mem, size_t size)
 {
     constexpr struct timeval interval = {30, 0};
 
@@ -242,7 +332,7 @@ void iobuf_free(void *mem, size_t size)
         static struct timeval tv_64k_last = {0, 0};
         if (!iobuf_64K_cache.push(mem))
             return;
-        munmap(mem, size);
+        blockmem_deallocate_hook(mem, size);
 
         if (uma_ratecheck(&tv_64k_last, &interval)) {
             LOG(WARNING) << "64k iobuf cache overflow";
@@ -253,7 +343,7 @@ void iobuf_free(void *mem, size_t size)
         static struct timeval tv_1M_last = {0, 0};
         if (!iobuf_1M_cache.push(mem))
             return;
-        munmap(mem, size);
+        blockmem_deallocate_hook(mem, size);
 
         if (uma_ratecheck(&tv_1M_last, &interval)) {
             LOG(WARNING) << "1M iobuf cache overflow";
@@ -262,17 +352,7 @@ void iobuf_free(void *mem, size_t size)
         g_iobuf_1M_overflow << 1;
     }
     else
-        ::free(mem);
-}
-
-// Function pointers to allocate or deallocate memory for a IOBuf::Block
-void* (*blockmem_allocate)(size_t) = &iobuf_malloc;
-void  (*blockmem_deallocate)(void*, size_t) = &iobuf_free;
-
-// Use default function pointers
-void reset_blockmem_allocate_and_deallocate() {
-    blockmem_allocate = iobuf_malloc;
-    blockmem_deallocate = iobuf_free;
+	blockmem_deallocate_hook(mem, size);
 }
 
 butil::static_atomic<size_t> g_nblock = BUTIL_STATIC_ATOMIC_INIT(0);
@@ -415,6 +495,8 @@ static void do_start_uma()
          NULL, NULL, NULL, NULL, UMA_ALIGN_CACHE,
          UMA_ZONE_LARGE_KEG | UMA_ZONE_OFFPAGE);
     CHECK(iobuf_zone != NULL) << "cannot create iobuf_zone";
+    uma_zone_set_allocf(iobuf_zone, iobuf_zone_allocate);
+    uma_zone_set_freef(iobuf_zone, iobuf_zone_deallocate);
     uma_prealloc(iobuf_zone, 1000);
     block_zone = uma_zcreate("iobuf::block", sizeof(IOBuf::Block),
          NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
@@ -1145,10 +1227,11 @@ ssize_t IOBuf::pcut_into_file_descriptor(int fd, off_t offset, size_t size_hint)
     ssize_t nw = 0;
 
     if (offset >= 0) {
-        static iobuf::iov_function pwritev_func = iobuf::get_pwritev_func();
+        iobuf::iov_function pwritev_func = iobuf::get_pwritev_func();
         nw = pwritev_func(fd, vec, nvec, offset);
     } else {
-        nw = ::writev(fd, vec, nvec);
+        iobuf::iov_seq_function writev_func = iobuf::get_writev_func();
+        nw = writev_func(fd, vec, nvec);
     }
     if (nw > 0) {
         pop_front(nw);
@@ -1271,10 +1354,11 @@ ssize_t IOBuf::pcut_multiple_into_file_descriptor(
 
     ssize_t nw = 0;
     if (offset >= 0) {
-        static iobuf::iov_function pwritev_func = iobuf::get_pwritev_func();
+        iobuf::iov_function pwritev_func = iobuf::get_pwritev_func();
         nw = pwritev_func(fd, vec, nvec, offset);
     } else {
-        nw = ::writev(fd, vec, nvec);
+        iobuf::iov_seq_function writev_func = iobuf::get_writev_func();
+        nw = writev_func(fd, vec, nvec);
     }
     if (nw <= 0) {
         return nw;
@@ -1811,7 +1895,7 @@ ssize_t IOPortal::pappend_from_file_descriptor(
     if (offset < 0) {
         nr = readv(fd, vec, nvec);
     } else {
-        static iobuf::iov_function preadv_func = iobuf::get_preadv_func();
+        iobuf::iov_function preadv_func = iobuf::get_preadv_func();
         nr = preadv_func(fd, vec, nvec, offset);
     }
     if (nr <= 0) {  // -1 or 0
@@ -1999,6 +2083,159 @@ ssize_t IOPortal::append_from_SSL_channel(
             return (nr > 0 ? nr : rc);
         }
     } while (nr < max_count);
+    return nr;
+}
+
+ssize_t IOPortal::pappend_from_dev_descriptor(int fd, off_t offset,
+    size_t max_count) {
+    size_t total = 0;
+    size_t rc = 0;
+
+    while (total < max_count) {
+        size_t to_read = max_count - total;
+        bool hit = false;
+        rc = pappend_from_dev_descriptor_impl(fd, offset, to_read, &hit);
+        if (rc <= 0) {
+            break;
+        }
+        offset += rc;
+        total += rc;
+        if (rc != to_read) {
+            if (!hit)
+                break;
+        }
+    }
+
+    return total ? total : rc;
+}
+
+ssize_t IOPortal::pappend_from_dev_descriptor_impl(int fd, off_t offset,
+    size_t max_count, bool *max_nvec_hit) {
+#define DISK_SECTOR_SIZE 512
+    constexpr uintptr_t page_shift = PAGE_SHIFT;
+    constexpr uintptr_t page_size = PAGE_SIZE;
+    constexpr uintptr_t page_mask = PAGE_SIZE-1;
+
+    iovec vec[MAX_APPEND_IOVEC];
+    int nvec = 0;
+    size_t space = 0;
+    Block* prev_p = NULL;
+    Block* p = _block;
+    size_t skipped = 0;
+    uintptr_t page_off = 0;
+    off_t offset2 = offset;
+
+    *max_nvec_hit = false;
+
+    // Prepare at most MAX_APPEND_IOVEC blocks or space of blocks >= max_count
+    do {
+start:
+        page_off = (offset2 & page_mask);
+        if (nvec == 0) {
+            // first page, NVME PRP requires address to align to end of page
+            if (page_size - page_off > max_count) {
+                page_off = page_size - roundup(max_count, DISK_SECTOR_SIZE);
+            }
+        }
+
+        bool free_it = false;
+        if (p == NULL) {
+            // allocate a new buffer
+            p = iobuf::acquire_tls_block();
+            if (BAIDU_UNLIKELY(!p)) {
+                errno = ENOMEM;
+                return -1;
+            }
+            if (prev_p != NULL) {
+                prev_p->portal_next = p;
+            } else {
+                _block = p;
+            }
+        }
+
+        uintptr_t addr1 = 0, addr2 = 0;
+        addr1 = (uintptr_t)p->data + p->size;
+        addr2 = (addr1 & ~page_mask) + page_off;
+        if (addr2 < addr1)
+            addr2 += page_size;
+        skipped = addr2 - addr1;
+        if (p->cap - p->size <= skipped)
+            free_it = true;
+        else {
+            size_t left = p->cap - (p->size + skipped);
+            if (left < (page_size - page_off))
+                free_it = true;
+        }
+        if (free_it) {
+            // we fully used it
+            p->size = p->cap; 
+            if (p == _block)
+                _block = NULL;
+            Block* const saved_next = p->portal_next;
+            p->dec_ref();  // block may be deleted
+            p = saved_next;
+            if (prev_p)
+                prev_p->portal_next = p;
+            goto start;
+        } else {
+            p->size += skipped;
+        }
+
+        vec[nvec].iov_base = p->data + p->size;
+        if (page_off) { // partial page
+            vec[nvec].iov_len = page_size - page_off;
+        } else { // multiple pages
+            vec[nvec].iov_len = (p->left_space() >> page_shift) << page_shift;
+        }
+        if (vec[nvec].iov_len == 0) {
+            fprintf(stderr, "%s unexpected iov_len == 0\n", __func__);
+            abort();
+        }
+        vec[nvec].iov_len = std::min(vec[nvec].iov_len, max_count - space);
+        space += vec[nvec].iov_len;
+        offset2 += vec[nvec].iov_len;
+        ++nvec;
+        if (space >= max_count) {
+            break;
+        }
+        if (nvec >= MAX_APPEND_IOVEC) {
+            *max_nvec_hit = true;
+            break;
+        }
+        prev_p = p;
+        p = p->portal_next;
+    } while (1);
+
+    ssize_t nr = 0;
+    if (offset < 0) {
+        iobuf::iov_seq_function readv_func = iobuf::get_readv_func();
+        nr = readv_func(fd, vec, nvec);
+    } else {
+        iobuf::iov_function preadv_func = iobuf::get_preadv_func();
+        nr = preadv_func(fd, vec, nvec, offset);
+    }
+    if (nr <= 0) {  // -1 or 0
+        if (empty()) {
+            return_cached_blocks();
+        }
+        return nr;
+    }
+
+    size_t total_len = nr;
+    int ivec = 0;
+    do {
+        const size_t len = std::min(total_len, vec[ivec].iov_len);
+        total_len -= len;
+        const IOBuf::BlockRef r = { _block->size, (uint32_t)len, _block };
+        _push_back_ref(r);
+        _block->size += len;
+        if (_block->full()) {
+            Block* const saved_next = _block->portal_next;
+            _block->dec_ref();  // _block may be deleted
+            _block = saved_next;
+        }
+        ivec++;
+    } while (total_len);
     return nr;
 }
 
