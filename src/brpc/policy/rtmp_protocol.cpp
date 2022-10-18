@@ -3620,14 +3620,12 @@ RtmpCreateStreamMessage::AppendAndDestroySelf(butil::IOBuf* out, Socket* s) {
 }
 
 void PackRtmpRequest(butil::IOBuf* /*buf*/,
-                     size_t *attachment_off,
                      SocketMessage** user_message,
                      uint64_t /*correlation_id*/,
                      const google::protobuf::MethodDescriptor* /*NULL*/,
                      Controller* cntl,
                      const butil::IOBuf& /*request*/,
                      const Authenticator*) {
-    *attachment_off = 0;
     // Send createStream command
     ControllerPrivateAccessor accessor(cntl);
     Socket* s = accessor.get_sending_socket();

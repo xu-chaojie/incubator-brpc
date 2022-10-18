@@ -33,7 +33,6 @@ void SerializeNovaRequest(butil::IOBuf* buf, Controller* cntl,
 
 // Pack `request' to `method' into `buf'.
 void PackNovaRequest(butil::IOBuf* buf,
-                     size_t *attachment_off,
                      SocketMessage** user_message_out,
                      uint64_t correlation_id,
                      const google::protobuf::MethodDescriptor* method,

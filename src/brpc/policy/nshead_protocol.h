@@ -37,7 +37,6 @@ void SerializeNsheadRequest(butil::IOBuf* request_buf, Controller* controller,
 
 void PackNsheadRequest(
     butil::IOBuf* packet_buf,
-    size_t *attachment_off,
     SocketMessage**,
     uint64_t correlation_id,
     const google::protobuf::MethodDescriptor*,

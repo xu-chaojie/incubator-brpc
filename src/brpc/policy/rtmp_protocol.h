@@ -548,7 +548,6 @@ void ProcessRtmpMessage(InputMessageBase* msg);
 
 // Pack createStream message
 void PackRtmpRequest(butil::IOBuf* buf,
-                     size_t *attachment_off,
                      SocketMessage**,
                      uint64_t correlation_id,
                      const google::protobuf::MethodDescriptor* method,
