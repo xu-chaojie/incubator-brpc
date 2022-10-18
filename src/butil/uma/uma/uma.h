@@ -609,7 +609,6 @@ struct uma_percpu_stat {
 };
 
 void uma_reclaim_wakeup(void);
-void uma_reclaim_worker(void *);
 
 #ifdef __cplusplus
 }

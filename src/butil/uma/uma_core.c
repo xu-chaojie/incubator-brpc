@@ -81,6 +81,7 @@ typedef int bool;
 
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 static pthread_t uma_timeout_td;
+static pthread_t uma_reclaim_td;
 
 /*
  * This is the zone and keg from which all zones are spawned.  The idea is that
@@ -246,6 +247,7 @@ static uma_zone_t uma_zcache_create_impl(char *name, int size,
     uma_ctor ctor, uma_dtor dtor, uma_init zinit, uma_fini zfini,
     uma_import zimport, uma_release zrelease, void *arg, int flags);
 static void uma_startup_impl(void);
+static void *uma_reclaim_worker(void *arg);
 
 void uma_print_zone(uma_zone_t);
 void uma_print_stats(void);
@@ -1678,6 +1680,7 @@ uma_startup3(void)
 	printf("Starting callout.\n");
 #endif
 	pthread_create(&uma_timeout_td, NULL, uma_timeout, NULL);
+	pthread_create(&uma_reclaim_td, NULL, uma_reclaim_worker, NULL);
 
 #ifdef UMA_DEBUG
 	printf("UMA startup3 complete.\n");
@@ -2767,7 +2770,7 @@ uma_reclaim_wakeup(void)
 	pthread_mutex_unlock(&uma_drain_mtx);	
 }
 
-void
+static void *
 uma_reclaim_worker(void *arg)
 {
 
@@ -2781,6 +2784,7 @@ uma_reclaim_worker(void *arg)
 		uma_reclaim_locked(true);
 		uma_sx_xunlock(&uma_drain_lock);
 	}
+	return 0;
 }
 
 /* See uma.h */
