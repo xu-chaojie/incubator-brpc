@@ -173,7 +173,8 @@ endif()
 # create executable
 add_executable(test_butil ${TEST_BUTIL_SOURCES}
                           ${CMAKE_CURRENT_BINARY_DIR}/iobuf.pb.cc
-                          $<TARGET_OBJECTS:BUTIL_LIB>)
+                          $<TARGET_OBJECTS:BUTIL_LIB>
+			  $<TARGET_OBJECTS:BVAR_OBJ>)
 target_link_libraries(test_butil gtest
                                  ${GPERFTOOLS_LIBRARIES}
                                  ${DYNAMIC_LIB})

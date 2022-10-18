@@ -25,7 +25,7 @@
 
 namespace butil {
 namespace iobuf {
-extern void* (*blockmem_allocate)(size_t);
+extern void* (*blockmem_allocate)(size_t, size_t);
 extern void (*blockmem_deallocate)(void*);
 extern void reset_blockmem_allocate_and_deallocate();
 extern int32_t block_shared_count(butil::IOBuf::Block const* b);
@@ -54,8 +54,9 @@ const int ALLOW_UNUSED check_dummy = butil::thread_atexit(check_tls_block);
 
 static butil::FlatSet<void*> s_set;
 
-void* debug_block_allocate(size_t block_size) {
-    void* b = operator new (block_size, std::nothrow);
+void* debug_block_allocate(size_t align, size_t block_size) {
+    //void* b = operator new (block_size, std::nothrow);
+    void *b = aligned_alloc(align, block_size);
     s_set.insert(b);
     return b;
 }
@@ -64,7 +65,8 @@ void debug_block_deallocate(void* b) {
     if (1ul != s_set.erase(b)) {
         ASSERT_TRUE(false) << "Bad block=" << b;
     } else {
-        operator delete(b);
+        //operator delete(b);
+        free(b);
     }
 }
 

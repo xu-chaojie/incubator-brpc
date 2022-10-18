@@ -41,6 +41,7 @@
 #include "butil/uma/uma/malloc.h"	    // For M_ZERO
 #include "butil/lfstack.h"
 #include "bvar/bvar.h"
+#include "ucm/api/ucm.h"
 
 namespace butil {
 namespace iobuf {
@@ -280,31 +281,38 @@ void default_blockmem_deallocate(void *mem, size_t size)
 }
 
 // Function pointers to allocate or deallocate memory for a IOBuf::Block
-static void* (*blockmem_allocate_hook)(size_t, size_t) = default_blockmem_allocate;
-static void  (*blockmem_deallocate_hook)(void*, size_t) = default_blockmem_deallocate;
+void* (*blockmem_allocate)(size_t, size_t) = default_blockmem_allocate;
+void  (*blockmem_deallocate)(void*, size_t) = default_blockmem_deallocate;
+
+static inline void call_blockmem_deallocate(void *mem, size_t size)
+{
+    // unregister from ucx 
+    ucm_vm_munmap(mem, size);
+    blockmem_deallocate(mem, size);
+}
 
 // Use default function pointers
 void reset_blockmem_allocate_and_deallocate() {
-    blockmem_allocate_hook = default_blockmem_allocate;
-    blockmem_deallocate_hook = default_blockmem_deallocate;
+    blockmem_allocate = default_blockmem_allocate;
+    blockmem_deallocate = default_blockmem_deallocate;
 }
 
 static void *iobuf_zone_allocate(uma_zone_t zone, vm_size_t size,
     uint8_t *pflag, int wait)
 {
     *pflag = 0;
-    void *p = blockmem_allocate_hook(PAGE_SIZE, size);
+    void *p = blockmem_allocate(PAGE_SIZE, size);
     if (wait & M_ZERO)
-        memset(p, 0, size);
+       memset(p, 0, size);
     return p;
 }
 
 static void iobuf_zone_deallocate(void* mem, size_t size, uint8_t)
 {
-    blockmem_deallocate_hook(mem, size);
+    call_blockmem_deallocate(mem, size);
 }
 
-void *blockmem_allocate(size_t size)
+static void *do_blockmem_allocate(size_t size)
 {
     start_uma();
     if (size == IOBuf::DEFAULT_BLOCK_SIZE)
@@ -319,10 +327,10 @@ void *blockmem_allocate(size_t size)
             return buf;
         }
     }
-    return blockmem_allocate_hook(PAGE_SIZE, size);
+    return blockmem_allocate(PAGE_SIZE, size);
 }
 
-void blockmem_deallocate(void *mem, size_t size)
+static void do_blockmem_deallocate(void *mem, size_t size)
 {
     constexpr struct timeval interval = {30, 0};
 
@@ -332,7 +340,8 @@ void blockmem_deallocate(void *mem, size_t size)
         static struct timeval tv_64k_last = {0, 0};
         if (!iobuf_64K_cache.push(mem))
             return;
-        blockmem_deallocate_hook(mem, size);
+
+        call_blockmem_deallocate(mem, size);
 
         if (uma_ratecheck(&tv_64k_last, &interval)) {
             LOG(WARNING) << "64k iobuf cache overflow";
@@ -343,16 +352,16 @@ void blockmem_deallocate(void *mem, size_t size)
         static struct timeval tv_1M_last = {0, 0};
         if (!iobuf_1M_cache.push(mem))
             return;
-        blockmem_deallocate_hook(mem, size);
+        call_blockmem_deallocate(mem, size);
 
         if (uma_ratecheck(&tv_1M_last, &interval)) {
             LOG(WARNING) << "1M iobuf cache overflow";
         }
 
         g_iobuf_1M_overflow << 1;
+    } else {
+        call_blockmem_deallocate(mem, size);
     }
-    else
-	blockmem_deallocate_hook(mem, size);
 }
 
 butil::static_atomic<size_t> g_nblock = BUTIL_STATIC_ATOMIC_INIT(0);
@@ -469,7 +478,7 @@ struct IOBuf::Block {
                 iobuf::g_blockmem.fetch_sub(cap + sizeof(Block),
                                             butil::memory_order_relaxed);
                 this->~Block();
-                iobuf::blockmem_deallocate(data_save, size);
+                iobuf::do_blockmem_deallocate(data_save, size);
             } else if (flags & IOBUF_BLOCK_FLAGS_USER_DATA) {
                 UserDataExtension* e = get_user_data_extension();
                 e->deleter2(data, e->arg);
@@ -531,7 +540,7 @@ inline IOBuf::Block* create_block(const size_t block_size) {
         LOG(FATAL) << "block_size=" << block_size << " is too large";
         return NULL;
     }
-    char* mem = (char*)iobuf::blockmem_allocate(block_size);
+    char* mem = (char*)iobuf::do_blockmem_allocate(block_size);
     if (mem == NULL) {
         return NULL;
     }
