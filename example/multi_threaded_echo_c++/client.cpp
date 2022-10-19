@@ -36,6 +36,7 @@ DEFINE_bool(dont_fail, false, "Print fatal when some call failed");
 DEFINE_bool(enable_ssl, false, "Use SSL connection");
 DEFINE_int32(dummy_port, -1, "Launch dummy server at this port");
 DEFINE_bool(use_ucp, false, "Use ucp connection");
+DEFINE_bool(verify_attachment, false, "Verify responsed attachment");
 
 std::string g_request;
 std::string g_attachment;
@@ -66,8 +67,15 @@ static void* sender(void* arg) {
         // the response comes back or error occurs(including timedout).
         stub.Echo(&cntl, &request, &response, NULL);
         if (!cntl.Failed()) {
+            if (FLAGS_verify_attachment) {
+                if (g_attachment != cntl.response_attachment()) {
+                    LOG(ERROR) << "attachment not same";
+                    abort();
+                }
+            }
             g_latency_recorder << cntl.latency_us();
         } else {
+            LOG(ERROR) << "rpc failure";
             g_error_count << 1; 
             CHECK(brpc::IsAskedToQuit() || !FLAGS_dont_fail)
                 << "error=" << cntl.ErrorText() << " latency=" << cntl.latency_us();
