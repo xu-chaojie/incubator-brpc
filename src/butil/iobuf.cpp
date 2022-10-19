@@ -51,8 +51,8 @@ static int get_uma_block_count(void *arg);
 static int get_64K_count(void *arg);
 static int get_1M_count(void *arg);
 
-DEFINE_int32(butil_iobuf_64K_max, 16000, "Maximum number of 64k blocks cached");
-DEFINE_int32(butil_iobuf_1M_max, 1000, "Maximum number of 1M blocks cached");
+DEFINE_int32(butil_iobuf_64K_max, 1600, "Maximum number of 64k blocks cached");
+DEFINE_int32(butil_iobuf_1M_max, 100, "Maximum number of 1M blocks cached");
 
 bvar::PassiveStatus<int> g_iobuf_64k_count("64K iobuf", get_64K_count, NULL);
 bvar::Adder<int> g_iobuf_64k_overflow("64K iobuf cache overflow");
@@ -501,8 +501,7 @@ namespace iobuf {
 static void do_start_uma()
 {
     iobuf_zone = uma_zcreate("iobuf", IOBuf::DEFAULT_BLOCK_SIZE,
-         NULL, NULL, NULL, NULL, UMA_ALIGN_CACHE,
-         UMA_ZONE_LARGE_KEG | UMA_ZONE_OFFPAGE);
+         NULL, NULL, NULL, NULL, UMA_ALIGN_CACHE, UMA_ZONE_OFFPAGE);
     CHECK(iobuf_zone != NULL) << "cannot create iobuf_zone";
     uma_zone_set_allocf(iobuf_zone, iobuf_zone_allocate);
     uma_zone_set_freef(iobuf_zone, iobuf_zone_deallocate);
