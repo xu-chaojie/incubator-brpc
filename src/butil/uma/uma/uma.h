@@ -233,11 +233,6 @@ uma_zone_t uma_zcache_create(char *name, int size, uma_ctor ctor, uma_dtor dtor,
 					 * Zone's pages will not be included in
 					 * mini-dumps.
 					 */
-#define	UMA_ZONE_PCPU		0x8000	/*
-					 * Allocates mp_maxid + 1 slabs sized to
-					 * sizeof(struct pcpu).
-					 */
-#define	UMA_ZONE_LARGE_KEG	0x10000	/* Large backend */
 
 /*
  * These flags are shared between the keg and zone.  In zones wishing to add
@@ -246,7 +241,7 @@ uma_zone_t uma_zcache_create(char *name, int size, uma_ctor ctor, uma_dtor dtor,
  */
 #define	UMA_ZONE_INHERIT						\
     (UMA_ZONE_OFFPAGE | UMA_ZONE_MALLOC | UMA_ZONE_NOFREE |		\
-    UMA_ZONE_HASH | UMA_ZONE_PCPU)
+    UMA_ZONE_HASH)
 
 /* Definitions for align */
 #define UMA_ALIGN_PTR	(sizeof(void *) - 1)	/* Alignment fit for ptr */
@@ -559,54 +554,6 @@ int uma_zone_exhausted(uma_zone_t zone);
 int uma_zone_exhausted_nolock(uma_zone_t zone);
 
 void uma_shutdown(void);
-
-/*
- * Exported statistics structures to be used by user space monitoring tools.
- * Statistics stream consists of a uma_stream_header, followed by a series of
- * alternative uma_type_header and uma_type_stat structures.
- */
-#define	UMA_STREAM_VERSION	0x00000001
-struct uma_stream_header {
-	uint32_t	ush_version;	/* Stream format version. */
-	uint32_t	ush_maxcpus;	/* Value of MAXCPU for stream. */
-	uint32_t	ush_count;	/* Number of records. */
-	uint32_t	_ush_pad;	/* Pad/reserved field. */
-};
-
-#define	UTH_MAX_NAME	32
-#define	UTH_ZONE_SECONDARY	0x00000001
-struct uma_type_header {
-	/*
-	 * Static per-zone data, some extracted from the supporting keg.
-	 */
-	char		uth_name[UTH_MAX_NAME];
-	uint32_t	uth_align;	/* Keg: alignment. */
-	uint32_t	uth_size;	/* Keg: requested size of item. */
-	uint32_t	uth_rsize;	/* Keg: real size of item. */
-	uint32_t	uth_maxpages;	/* Keg: maximum number of pages. */
-	uint32_t	uth_limit;	/* Keg: max items to allocate. */
-
-	/*
-	 * Current dynamic zone/keg-derived statistics.
-	 */
-	uint32_t	uth_pages;	/* Keg: pages allocated. */
-	uint32_t	uth_keg_free;	/* Keg: items free. */
-	uint32_t	uth_zone_free;	/* Zone: items free. */
-	uint32_t	uth_bucketsize;	/* Zone: desired bucket size. */
-	uint32_t	uth_zone_flags;	/* Zone: flags. */
-	uint64_t	uth_allocs;	/* Zone: number of allocations. */
-	uint64_t	uth_frees;	/* Zone: number of frees. */
-	uint64_t	uth_fails;	/* Zone: number of alloc failures. */
-	uint64_t	uth_sleeps;	/* Zone: number of alloc sleeps. */
-	uint64_t	_uth_reserved1[2];	/* Reserved. */
-};
-
-struct uma_percpu_stat {
-	uint64_t	ups_allocs;	/* Cache: number of allocations. */
-	uint64_t	ups_frees;	/* Cache: number of frees. */
-	uint64_t	ups_cache_free;	/* Cache: free items in cache. */
-	uint64_t	_ups_reserved[5];	/* Reserved. */
-};
 
 void uma_reclaim_wakeup(void);
 

@@ -202,7 +202,6 @@ enum zfreeskip { SKIP_NONE = 0, SKIP_DTOR, SKIP_FINI };
 /* Prototypes.. */
 
 static void *page_alloc(uma_zone_t, vm_size_t, uint8_t *, int);
-static void *startup_alloc(uma_zone_t, vm_size_t, uint8_t *, int);
 static void page_free(void *, vm_size_t, uint8_t);
 static uma_slab_t keg_alloc_slab(uma_keg_t, uma_zone_t, int);
 static void cache_drain(uma_zone_t);
@@ -989,21 +988,6 @@ out:
 }
 
 /*
- * This function is intended to be used early on in place of page_alloc() so
- * that we may use the boot time page cache to satisfy allocations before
- * the VM is ready.
- */
-static void *
-startup_alloc(uma_zone_t zone, vm_size_t bytes, uint8_t *pflag, int wait)
-{
-	uma_keg_t keg;
-
-	keg = zone_first_keg(zone);
-	keg->uk_allocf = page_alloc;
-	return keg->uk_allocf(zone, bytes, pflag, wait);
-}
-
-/*
  * Allocates a number of pages from the system
  *
  * Arguments:
@@ -1280,9 +1264,6 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 	if (arg->flags & UMA_ZONE_ZINIT)
 		keg->uk_init = zero_init;
 
-	if (arg->flags & UMA_ZONE_PCPU)
-		keg->uk_flags |= UMA_ZONE_OFFPAGE;
-
 	if (keg->uk_flags & UMA_ZONE_CACHESPREAD) {
 		keg_cachespread_init(keg);
 	} else {
@@ -1294,17 +1275,6 @@ keg_ctor(void *mem, int size, void *udata, int flags)
 
 	if (keg->uk_flags & UMA_ZONE_OFFPAGE)
 		keg->uk_slabzone = slabzone;
-
-	/*
-	 * If we haven't booted yet we need allocations to go through the
-	 * startup cache until the vm is ready.
-	 */
-	if (keg->uk_ppera == 1) {
-		if (booted < UMA_STARTUP2)
-			keg->uk_allocf = startup_alloc;
-	} else if (booted < UMA_STARTUP2 &&
-	    (keg->uk_flags & UMA_ZFLAG_INTERNAL))
-		keg->uk_allocf = startup_alloc;
 
 	/*
 	 * Initialize keg's lock
@@ -1840,24 +1810,6 @@ uma_zalloc_arg(uma_zone_t zone, void *udata, int flags)
 	printf("Allocating one item from %s(%p)\n", zone->uz_name, zone);
 #endif
 
-#ifdef DEBUG_MEMGUARD
-	if (memguard_cmp_zone(zone)) {
-		item = memguard_alloc(zone->uz_size, flags);
-		if (item != NULL) {
-			if (zone->uz_init != NULL &&
-			    zone->uz_init(item, zone->uz_size, flags) != 0)
-				return (NULL);
-			if (zone->uz_ctor != NULL &&
-			    zone->uz_ctor(item, zone->uz_size, udata,
-			    flags) != 0) {
-			    	zone->uz_fini(item, zone->uz_size);
-				return (NULL);
-			}
-			return (item);
-		}
-		/* This is unfortunate but should not be fatal. */
-	}
-#endif
 	/*
 	 * If possible, allocate from the per-CPU cache.  There are two
 	 * requirements for safe access to the per-CPU cache: (1) the thread
@@ -2807,7 +2759,7 @@ uma_zone_exhausted_nolock(uma_zone_t zone)
 
 void uma_zone_drain(uma_zone_t zone)
 {
-    zone_drain(zone);
+	zone_drain(zone);
 }
 
 static void
@@ -2879,4 +2831,3 @@ uma_print_zone(uma_zone_t zone)
 		cache_print(cache);
 	}
 }
-
