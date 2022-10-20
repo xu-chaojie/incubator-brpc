@@ -141,6 +141,11 @@ UcpConnection::UcpConnection(UcpCm *cm, UcpWorker *w)
 
 UcpConnection::~UcpConnection()
 {
+    // Free all output data
+    for (size_t i = 0; i < delayed_data_q_.size(); ++i) {
+        delete delayed_data_q_[i];
+    }
+
     if (ep_) {
         LOG(ERROR) << "ep_ should be NULL";
     }
@@ -151,43 +156,36 @@ UcpConnection::~UcpConnection()
 
 void *UcpConnection::operator new(size_t size)
 {
-    return aligned_alloc(BAIDU_CACHELINE_SIZE, size);
+    return ::aligned_alloc(BAIDU_CACHELINE_SIZE, size);
 }
 
 void UcpConnection::operator delete(void *ptr)
 {
-    free(ptr);
+    ::free(ptr);
 }
 
 int UcpConnection::Accept(ucp_conn_request_h req)
 {
     bthread::v2::wlock_guard g(mutex_);
-
-    int rc = worker_->Accept(this, req);
-    if (rc == 0) {
-        state_ = STATE_OPEN;
-    }
-    return rc;
+    // state_ is changed by Worker
+    return worker_->Accept(this, req);
 }
 
 int UcpConnection::Connect(const butil::EndPoint &peer)
 {
     bthread::v2::wlock_guard g(mutex_);
-
-    int rc = worker_->Connect(this, peer);
-    if (rc == 0) {
-        state_ = STATE_OPEN;
-    }
-    return rc;
+    // state_ is changed by Worker
+    return worker_->Connect(this, peer);
 }
 
 void UcpConnection::Close()
 {
     bthread::v2::wlock_guard g(mutex_);
 
-    if (state_ != STATE_OPEN) {
+    if (state_ == STATE_NONE || state_ == STATE_CLOSED) {
         return;
     }
+    // state_ is changed by Worker
     worker_->Release(this);
     WakePing();
 }
@@ -220,19 +218,21 @@ void UcpConnection::SetSocketId(SocketId id)
 void UcpConnection::DataReady()
 {
     data_ready_flag_ = false;
-    if (state_ == STATE_OPEN && socket_id_set_)
-        Socket::StartInputEvent(socket_id_, EPOLLIN, ucp_consumer_thread_attr);
-    else {
-        if (state_ != STATE_OPEN) {
-            DLOG(WARNING) << "brpc::Socket is closed, "
-                             "DataReady does not notify the socket";
-        } else {
+    // If state is STATE_CLOSED, we don't need to notify upper layer,
+    // because only upper layer sets state to STATE_CLOSED with Close()
+    // function.
+    if (state_ != STATE_CLOSED) {
+        if (socket_id_set_)
+            Socket::StartInputEvent(socket_id_, EPOLLIN,
+                                    ucp_consumer_thread_attr);
+        else {
             DLOG(WARNING) << "brpc::Socket id is not set, "
                              "DataReady does not notify the socket";
         }
     }
-    if (ucp_code_.load(butil::memory_order_relaxed) ||
-        ucp_recv_code_.load(butil::memory_order_relaxed)) {
+
+    // Ping() is interested in error condition
+    if (ucp_code_.load(butil::memory_order_relaxed)) {
         WakePing();
     }
 }
@@ -242,6 +242,15 @@ ssize_t UcpConnection::Read(butil::IOBuf *out, size_t size_hint)
     ssize_t rc;
     bthread::v2::rlock_guard g(mutex_);
  
+    if (state_ == STATE_HELLO || state_ == STATE_WAIT_HELLO) {
+        // Delay receiving data, if IO error occurred, return EOF
+        if (ucp_code_.load())
+            return 0;
+        // Try again later
+        errno = EAGAIN;
+        return -1;
+    }
+
     // Connection closed, return EOF
     if (state_ != STATE_OPEN) {
         LOG(ERROR) << "Read with closed state";
@@ -278,6 +287,19 @@ ssize_t UcpConnection::Write(butil::IOBuf *data_list[],
 {
     bthread::v2::rlock_guard g(mutex_);
 
+    if (state_ == STATE_HELLO || state_ == STATE_WAIT_HELLO) {
+        // Delay sending data until hello is replied
+        size_t total = 0;
+        BAIDU_SCOPED_LOCK(send_mutex_);
+        for (int i = 0; i < ndata; ++i) {
+            butil::IOBuf *buf = new butil::IOBuf(butil::IOBuf::Movable(*data_list[i]));
+            delayed_data_q_.push_back(buf);
+            delayed_off_q_.push_back(attachment_off_list[i]);
+            total += buf->length();
+        }
+        return total;
+    }
+
     if (state_ != STATE_OPEN) {
         errno = ENOTCONN;
         return -1;
@@ -297,6 +319,33 @@ ssize_t UcpConnection::Write(butil::IOBuf *data_list[],
     return len;
 }
 
+// Called by UcpWorker to change state to STAE_OPEN
+void UcpConnection::Open()
+{
+    bthread::v2::wlock_guard g(mutex_);
+    if (state_ == STATE_HELLO || state_ == STATE_WAIT_HELLO) {
+        state_ = STATE_OPEN;
+
+        if (delayed_data_q_.size() != delayed_off_q_.size()) {
+            LOG(FATAL) << "sizes of delayed queues are not same";
+        }
+
+        if (delayed_data_q_.size() != 0) {
+            (void) worker_->StartSend(UCP_CMD_BRPC, this,
+                    delayed_data_q_.data(), delayed_off_q_.data(),
+                    delayed_off_q_.size());
+            for (size_t i = 0; i < delayed_data_q_.size(); ++i) {
+                delete delayed_data_q_[i];
+            }
+            delayed_data_q_.resize(0);
+            delayed_off_q_.resize(0);
+        }
+
+        WakePing();
+        DataReady();
+    }
+}
+
 int UcpConnection::Ping(const timespec* abstime)
 {
     int rc = DoPing(abstime);
@@ -304,6 +353,18 @@ int UcpConnection::Ping(const timespec* abstime)
         int err = errno;
         LOG(ERROR) << "Ping " << remote_side_str_ << " (" << strerror(err) << ")";
         errno = err;
+    }
+    return rc;
+}
+
+int UcpConnection::WaitOpen(const timespec *abstime)
+{
+    int rc = 0;
+
+    std::unique_lock<bthread::Mutex> pg(ping_mutex_);
+    while (rc == 0 && (state_ == STATE_HELLO || state_ == STATE_WAIT_HELLO) &&
+           ucp_code_.load() == 0 && ucp_recv_code_.load() == 0) {
+           rc = ping_cond_.wait_until(pg, *abstime);
     }
     return rc;
 }
@@ -318,8 +379,14 @@ int UcpConnection::DoPing(const timespec* abstime)
         ts.tv_sec += FLAGS_brpc_ucp_ping_timeout;
         abstime = &ts;
     }
-    bthread::v2::rlock_guard lg(mutex_);
 
+    if (state_ == STATE_HELLO || state_ == STATE_WAIT_HELLO) {
+        int err = WaitOpen(abstime);
+        if (err != 0)
+            return err;
+    }
+
+    bthread::v2::rlock_guard lg(mutex_);
     if (state_ != STATE_OPEN) {
         errno = ENOTCONN;
         return -1;

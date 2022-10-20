@@ -60,6 +60,8 @@ public:
 private:
     class PingHandler;
     class PongHandler;
+    class HelloHandler;
+    class HelloReplyHandler;
 
     int Initialize();
     int Accept(UcpConnection *conn, ucp_conn_request_h req);
@@ -108,11 +110,14 @@ private:
     void MergeInputMessage(UcpConnection *conn);
     void HandlePing(const UcpConnectionRef &conn, UcpAmMsg *msg);
     void HandlePong(const UcpConnectionRef &conn, UcpAmMsg *msg);
+    void HandleHello(const UcpConnectionRef &conn, UcpAmMsg *msg);
+    void HandleHelloReply(const UcpConnectionRef &conn, UcpAmMsg *msg);
     void DispatchExternalEventLocked(EventCallbackRef e);
 
     void AddConnection(UcpConnection *conn);
     void RemoveConnection(const ucp_ep_h ep);
     UcpConnectionRef FindConnection(const ucp_ep_h ep);
+    bool SendHello(UcpConnection *conn);
 
 private:
     butil::IOBuf pad_buf_;
