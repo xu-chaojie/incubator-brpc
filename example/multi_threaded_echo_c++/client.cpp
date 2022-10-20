@@ -75,7 +75,6 @@ static void* sender(void* arg) {
             }
             g_latency_recorder << cntl.latency_us();
         } else {
-            LOG(ERROR) << "rpc failure";
             g_error_count << 1; 
             CHECK(brpc::IsAskedToQuit() || !FLAGS_dont_fail)
                 << "error=" << cntl.ErrorText() << " latency=" << cntl.latency_us();
