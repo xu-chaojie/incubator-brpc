@@ -44,8 +44,10 @@ typedef butil::intrusive_ptr<UcpConnection> UcpConnectionRef;
 enum {
     UCP_CMD_BRPC,
     UCP_CMD_PING,
-    UCP_CMD_PONG
-#define UCP_CMD_MAX UCP_CMD_PONG
+    UCP_CMD_PONG,
+    UCP_CMD_HELLO,
+    UCP_CMD_HELLO_REPLY,
+#define UCP_CMD_MAX UCP_CMD_HELLO_REPLY
 };
 
 struct MsgHeader {
@@ -139,17 +141,21 @@ public:
     void operator delete(void *);
 
 private:
+    void Open();
     void Close();
     int Accept(ucp_conn_request_h req);
     int Connect(const butil::EndPoint &peer);
     void DataReady();
     void HandlePong(UcpAmMsg *msg);
+    int  WaitOpen(const struct timespec *abstime);
     void WakePing(); 
     int DoPing(const struct timespec *abstime);
 
 private:
     enum {
         STATE_NONE,
+	    STATE_HELLO,
+	    STATE_WAIT_HELLO,
         STATE_OPEN,
         STATE_CLOSED,
     };
@@ -169,6 +175,8 @@ private:
     // Cached remote address
     butil::EndPoint remote_side_;
     std::string remote_side_str_;
+    std::vector<butil::IOBuf *> delayed_data_q_;
+    std::vector<size_t> delayed_off_q_;
 
     bthread::Mutex ping_mutex_;
     bthread::ConditionVariable ping_cond_;
@@ -194,6 +202,7 @@ private:
 
     friend class UcpCm;
     friend class UcpWorker;
+    friend class UcpHelloHandler;
 };
 
 } // namespace brpc

@@ -30,6 +30,8 @@
 #include <sys/param.h>
 #include <sys/time.h>
 
+#include <ios>
+
 #define AM_ID  0
 
 /*
@@ -67,6 +69,44 @@ static bool validate_pad(const char* flagname, uint32_t value)
     return false;
 }
 DEFINE_validator(brpc_ucp_message_pad, &validate_pad);
+
+uint64_t g_supported_features;
+uint64_t g_required_features;
+
+struct Hello {
+    uint64_t required_features;
+    uint64_t supported_features;
+
+    Hello() 
+        : required_features(0)
+        , supported_features(0)
+    {
+    }
+
+    bool decode(butil::IOBuf &buf) {
+        uint64_t data;
+
+        if (buf.cutn(&data, sizeof(data)) != sizeof(data))
+            return false;
+        required_features = le64toh(data);
+        if (buf.cutn(&data, sizeof(data)) != sizeof(data))
+            return false;
+        supported_features = le64toh(data);
+        return true;
+    }
+
+    bool encode(butil::IOBuf &buf) const {
+        uint64_t data;
+
+        data = htole64(required_features);
+        if (buf.append(&data, sizeof(data)))
+            return false;
+        data = htole64(supported_features);
+        if (buf.append(&data, sizeof(data)))
+            return false;
+        return true;
+    }
+};
 
 static void *alloc_trie_node(struct butil::pctrie *ptree)
 {
@@ -111,6 +151,91 @@ public:
     virtual ~PongHandler() {
         CHECK(msg == NULL) << "msg memory was not freed";
     } 
+};
+
+class UcpWorker::HelloHandler : public EventCallback {
+public:
+    UcpConnectionRef conn;
+    UcpAmMsg *msg;
+    HelloHandler(const UcpConnectionRef& c, UcpAmMsg *m)
+        : conn(c), msg(m) {}
+    virtual void do_request(int fd_or_id) {
+        Hello hello;
+        UcpWorker *worker = conn->GetWorker();
+        if (!hello.decode(msg->buf)) {
+            LOG(ERROR) << "Can not decode hello packet from "
+                       << conn->remote_side_str_;
+            conn->ucp_code_.store(UCS_ERR_MESSAGE_TRUNCATED);
+            worker->SetDataReady(conn);
+        } else {
+            butil::IOBuf buf;
+            hello.required_features = g_required_features;
+            hello.supported_features = g_supported_features;
+            if (!hello.encode(buf)) {
+                LOG(ERROR) << "Can not encode hello packet";
+                conn->ucp_code_.store(UCS_ERR_NO_MEMORY);
+                worker->SetDataReady(conn);
+            } else {
+                worker->StartSend(UCP_CMD_HELLO_REPLY, conn.get(), &buf, 0);
+                conn->Open();
+            }
+        }
+        UcpAmMsg::Release(msg);
+        msg = NULL;
+    }
+    virtual ~HelloHandler() {
+        CHECK(msg == NULL) << "msg memory was not freed";
+    } 
+};
+
+class UcpWorker::HelloReplyHandler : public EventCallback {
+public:
+    UcpConnectionRef conn;
+    UcpAmMsg *msg;
+    HelloReplyHandler(const UcpConnectionRef& c, UcpAmMsg *m)
+        : conn(c), msg(m) {}
+    virtual void do_request(int fd_or_id) {
+        Hello hello;
+        UcpWorker *worker = conn->GetWorker();
+        int success = 1;
+        if (!hello.decode(msg->buf)) {
+            LOG(ERROR) << "Can not decode hello packet from "
+                       << conn->remote_side_str_;
+            conn->ucp_code_.store(UCS_ERR_MESSAGE_TRUNCATED);
+            worker->SetDataReady(conn);
+            success = 0;
+        } else {
+            butil::IOBuf buf;
+            uint64_t missing;
+            missing = (hello.required_features & ~g_supported_features);
+            if (missing) {
+                LOG(ERROR) << "Peer " << conn->remote_side_str_
+                           << " requires feature set "
+                           << std::hex << "0x" << missing
+                           << " is not supported by me";
+                conn->ucp_code_.store(UCS_ERR_UNSUPPORTED);
+                worker->SetDataReady(conn);
+                success = 0;
+            }
+            missing = (g_required_features & ~hello.supported_features);
+            if (missing) {
+                LOG(ERROR) << "Requires feature set "
+                           << std::hex << "0x" << missing
+                           << "not supported by " << conn->remote_side_str_;
+                conn->ucp_code_.store(UCS_ERR_UNSUPPORTED);
+                worker->SetDataReady(conn);
+                success = 0;
+            }
+        }
+        if (success)
+            conn->Open();
+        UcpAmMsg::Release(msg);
+        msg = NULL;
+    }
+
+    virtual ~HelloReplyHandler() {
+        CHECK(msg == NULL) << "msg memory was not freed";
+    }
 };
 
 UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
@@ -779,8 +904,15 @@ void UcpWorker::SaveInputMessage(const UcpConnectionRef &conn, UcpAmMsg *msg)
     case UCP_CMD_PONG:
         HandlePong(conn, msg);
         break;
+    case UCP_CMD_HELLO:
+        HandleHello(conn, msg);
+        break;
+    case UCP_CMD_HELLO_REPLY:
+        HandleHelloReply(conn, msg);
+        break;
     default:
-        LOG(ERROR) << "From " << conn->remote_side_str_ << "i ,unknown command " << msg->header.cmd;
+        UcpAmMsg::Release(msg);
+        LOG(ERROR) << "From " << conn->remote_side_str_ << " ,unknown command " << msg->header.cmd;
     }
 }
 
@@ -816,21 +948,12 @@ void UcpWorker::MergeInputMessage(UcpConnection *conn)
     }
 }
 
-void UcpWorker::HandlePing(const UcpConnectionRef &conn, UcpAmMsg *msg)
-{
-    DispatchExternalEventLocked(new PingHandler(conn, msg));
-}
-
-void UcpWorker::HandlePong(const UcpConnectionRef &conn, UcpAmMsg *msg)
-{
-    DispatchExternalEventLocked(new PongHandler(conn, msg));
-}
-
 int UcpWorker::Accept(UcpConnection *conn, ucp_conn_request_h req)
 {
     BAIDU_SCOPED_LOCK(mutex_);
     int ret = CreateUcpEp(conn, req);
     if (ret == 0) {
+        conn->state_ = UcpConnection::STATE_WAIT_HELLO;
         AddConnection(conn);
         MaybeWakeup();
     }
@@ -842,10 +965,12 @@ int UcpWorker::Connect(UcpConnection *conn, const butil::EndPoint &peer)
     BAIDU_SCOPED_LOCK(mutex_);
     int ret = create_ucp_ep(ucp_worker_, peer, ErrorCallback, this, &conn->ep_);
     if (ret == 0) {
+        conn->state_ = UcpConnection::STATE_HELLO;
         AddConnection(conn);
         conn->remote_side_ = peer;
         auto str = butil::endpoint2str(peer);
         conn->remote_side_str_ = str.c_str();
+        SendHello(conn);
         MaybeWakeup();
     }
     return ret;
@@ -1200,6 +1325,44 @@ ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn,
 out:
     errno = err;
     return total ? total : -1;
+}
+
+bool UcpWorker::SendHello(UcpConnection *conn)
+{
+    // assert(w->mutex_.is_locked());
+    butil::IOBuf buf;
+    Hello hello;
+
+    if (!hello.encode(buf)) {
+        LOG(ERROR) << "can not encode Hello packet";
+        conn->ucp_code_.store(UCS_ERR_NO_MEMORY);
+        UcpConnectionRef ref(conn);
+        SetDataReadyLocked(ref);
+        return false;
+    }
+
+    ssize_t len = buf.length();
+    return StartSend(UCP_CMD_HELLO, conn, &buf, 0) == len;
+}
+
+void UcpWorker::HandlePing(const UcpConnectionRef &conn, UcpAmMsg *msg)
+{
+    DispatchExternalEventLocked(new PingHandler(conn, msg));
+}
+
+void UcpWorker::HandlePong(const UcpConnectionRef &conn, UcpAmMsg *msg)
+{
+    DispatchExternalEventLocked(new PongHandler(conn, msg));
+}
+
+void UcpWorker::HandleHello(const UcpConnectionRef &conn, UcpAmMsg *msg)
+{
+    DispatchExternalEventLocked(new HelloHandler(conn, msg));
+}
+
+void UcpWorker::HandleHelloReply(const UcpConnectionRef &conn, UcpAmMsg *msg)
+{
+    DispatchExternalEventLocked(new HelloReplyHandler(conn, msg));
 }
 
 } // namespace brpc
