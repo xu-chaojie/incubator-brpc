@@ -42,6 +42,10 @@ class UcpConnection;
 typedef butil::intrusive_ptr<UcpConnection> UcpConnectionRef;
 
 enum {
+    UCP_VER_0
+};
+
+enum {
     UCP_CMD_BRPC,
     UCP_CMD_PING,
     UCP_CMD_PONG,
@@ -51,9 +55,19 @@ enum {
 };
 
 struct MsgHeader {
-    uint32_t cmd;
-    uint32_t pad;
+    uint16_t ver;
+    uint16_t cmd;
+    uint16_t pad;
+    uint16_t reserve;
     uint64_t sn;
+
+    void init() {
+        ver = UCP_VER_0;
+        cmd = UCP_CMD_BRPC;
+        pad = 0;
+        reserve = 0;
+        sn = -1L;
+    }
 };
 
 struct UcpAmMsg;
