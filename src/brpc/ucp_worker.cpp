@@ -54,21 +54,11 @@ DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
 DEFINE_bool(brpc_ucp_always_flush, false, "flush when disconnecting");
 
 /*
-  接收端读写NVME SGL也许需要4字节对齐的地址，这通过在接收端总是提供4字节
+  接收端读写NVME也许需要4字节对齐的地址，这通过在接收端总是提供4字节
   对齐的接收缓冲区，并在发送端对attachment进行4字节对齐来达到。
 */
-#define NVME_SGL_ALIGN  4
-#define NVME_MAX_ALIGN  512
-DEFINE_uint32(brpc_ucp_message_pad, NVME_SGL_ALIGN, "message pad size");
-
-static bool validate_pad(const char* flagname, uint32_t value)
-{
-    if (value <= NVME_MAX_ALIGN && powerof2(value))
-        return true;
-    printf("Invalid value for --%s: %d\n", flagname, (int)value);
-    return false;
-}
-DEFINE_validator(brpc_ucp_message_pad, &validate_pad);
+#define NVME_DWORD_ALIGN  4
+#define NVME_MAX_ALIGN    64
 
 uint64_t g_supported_features;
 uint64_t g_required_features;
@@ -544,15 +534,19 @@ again:
 
 static inline void MsgHeaderIn(MsgHeader *host, const MsgHeader *net)
 {
-    host->cmd = le32toh(net->cmd);
-    host->pad = le32toh(net->pad);
+    host->ver = le16toh(net->ver);
+    host->cmd = le16toh(net->cmd);
+    host->pad = le16toh(net->pad);
+    host->reserve = le16toh(net->reserve);
     host->sn = le64toh(net->sn);
 }
 
 static inline void MsgHeaderOut(const MsgHeader *host, MsgHeader *net)
 {
-    net->cmd = htole32(host->cmd);
-    net->pad = htole32(host->pad);
+    net->ver = htole16(host->ver);
+    net->cmd = htole16(host->cmd);
+    net->pad = htole16(host->pad);
+    net->reserve = htole16(host->reserve);
     net->sn = htole64(host->sn);
 }
 
@@ -594,10 +588,16 @@ ucs_status_t UcpWorker::DoAmCallback(
         LOG(ERROR) << "header_length is less than " << sizeof(*mh);
         return UCS_OK;
     }
-    if (BAIDU_UNLIKELY(le32toh(mh->cmd) > UCP_CMD_MAX)) {
+    if (BAIDU_UNLIKELY(le16toh(mh->ver) != UCP_VER_0)) {
         conn->ucp_code_.store(UCS_ERR_INVALID_PARAM);
         SetDataReadyLocked(conn);
-        LOG(ERROR) << "Unknown command id: " << le32toh(mh->cmd);
+        LOG(ERROR) << "Unknown command verion: " << le16toh(mh->ver);
+        return UCS_OK;
+    }
+    if (BAIDU_UNLIKELY(le16toh(mh->cmd) > UCP_CMD_MAX)) {
+        conn->ucp_code_.store(UCS_ERR_INVALID_PARAM);
+        SetDataReadyLocked(conn);
+        LOG(ERROR) << "Unknown command id: " << le16toh(mh->cmd);
         return UCS_OK;
     }
     if (BAIDU_UNLIKELY(!(param->recv_attr & (UCP_AM_RECV_ATTR_FLAG_DATA |
@@ -1274,17 +1274,14 @@ ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn,
             err = ENOMEM;
             break;
         }
-        size_t attach_off = attachment_off_list[i];
-        int to_pad = 0;
         msg->nvec = 0;
-        if (FLAGS_brpc_ucp_message_pad) {
-            to_pad = FLAGS_brpc_ucp_message_pad -
-                (attach_off & (FLAGS_brpc_ucp_message_pad - 1));
-            if (to_pad)
-                pad_buf_.fill_ucp_iov(&msg->iov, &msg->nvec, to_pad);
-        }
+        size_t attach_off = attachment_off_list[i];
+        uint16_t to_pad = NVME_DWORD_ALIGN - (attach_off & (NVME_DWORD_ALIGN - 1));
+        if (to_pad)
+            pad_buf_.fill_ucp_iov(&msg->iov, &msg->nvec, to_pad);
         msg->buf.append(butil::IOBuf::Movable(*data_list[i]));
         msg->buf.fill_ucp_iov(&msg->iov, &msg->nvec, ULONG_MAX);
+        header.init();
         header.cmd = cmd;
         header.pad = to_pad;
         header.sn = conn->next_send_sn_;

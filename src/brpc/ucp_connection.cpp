@@ -39,9 +39,7 @@ static bvar::Adder<int> g_ucp_conn("ucp_connection_count");
 
 UcpAmMsg::UcpAmMsg()
 {
-    header.cmd = UCP_CMD_BRPC;
-    header.pad = 0;
-    header.sn = -1;
+    header.init();
     data = nullptr;
     length = 0;
     nvec = 0;
@@ -61,9 +59,7 @@ UcpAmMsg *UcpAmMsg::Allocate(void)
 void UcpAmMsg::Release(UcpAmMsg *o)
 {
     o->conn.reset();
-    o->header.cmd = UCP_CMD_BRPC;
-    o->header.pad = 0;
-    o->header.sn = -1;
+    o->header.init();
     o->data = nullptr;
     o->length = 0;
     o->nvec = 0;
@@ -87,7 +83,7 @@ void UcpAmMsg::Release(UcpAmMsg *o)
 
 UcpAmSendInfo::UcpAmSendInfo()
 {
-    header.sn = -1;
+    header.init();
     code = UCS_OK;
     req = nullptr;
     nvec = 0;
@@ -104,7 +100,7 @@ UcpAmSendInfo *UcpAmSendInfo::Allocate(void)
 void UcpAmSendInfo::Release(UcpAmSendInfo *o)
 {
     o->conn.reset();
-    o->header.sn = -1;
+    o->header.init();
     o->code = UCS_OK;
     o->req = nullptr;
     o->nvec = 0;
