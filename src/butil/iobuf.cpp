@@ -297,19 +297,27 @@ void reset_blockmem_allocate_and_deallocate() {
     blockmem_deallocate = default_blockmem_deallocate;
 }
 
-static void *iobuf_zone_allocate(uma_zone_t zone, vm_size_t size,
-    uint8_t *pflag, int wait)
+static int iobuf_import(void *arg, void **store, int count, int flags)
 {
-    *pflag = 0;
-    void *p = blockmem_allocate(PAGE_SIZE, size);
-    if (wait & M_ZERO)
-       memset(p, 0, size);
-    return p;
+    constexpr int align = PAGE_SIZE;
+    constexpr int size = IOBuf::DEFAULT_BLOCK_SIZE;
+    int i;
+    for (i = 0; i < count; ++i) {
+        void *p = blockmem_allocate(align, size);
+        if (p == NULL)
+            break;
+        store[i] = p;
+        if (flags & M_ZERO)
+            memset(p, 0, size);
+    }
+    return i;
 }
 
-static void iobuf_zone_deallocate(void* mem, size_t size, uint8_t)
+static void iobuf_release(void *arg, void **store, int count)
 {
-    call_blockmem_deallocate(mem, size);
+    for (int i = 0;i < count; ++i) {
+        call_blockmem_deallocate(store[i], IOBuf::DEFAULT_BLOCK_SIZE);
+    }
 }
 
 static void *do_blockmem_allocate(size_t size)
@@ -500,11 +508,9 @@ namespace iobuf {
 
 static void do_start_uma()
 {
-    iobuf_zone = uma_zcreate("iobuf", IOBuf::DEFAULT_BLOCK_SIZE,
-         NULL, NULL, NULL, NULL, UMA_ALIGN_CACHE, UMA_ZONE_OFFPAGE);
+    iobuf_zone = uma_zcache_create("iobuf", IOBuf::DEFAULT_BLOCK_SIZE,
+         NULL, NULL, NULL, NULL, iobuf_import, iobuf_release, NULL, 0);
     CHECK(iobuf_zone != NULL) << "cannot create iobuf_zone";
-    uma_zone_set_allocf(iobuf_zone, iobuf_zone_allocate);
-    uma_zone_set_freef(iobuf_zone, iobuf_zone_deallocate);
     uma_prealloc(iobuf_zone, 1000);
     block_zone = uma_zcreate("iobuf::block", sizeof(IOBuf::Block),
          NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
