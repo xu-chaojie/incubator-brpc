@@ -242,7 +242,7 @@ static void uma_startup2(void);
 static uma_zone_t uma_zcreate_impl(const char *name, size_t size,
     uma_ctor ctor, uma_dtor dtor, uma_init uminit, uma_fini fini, int align,
     uint32_t flags);
-static uma_zone_t uma_zcache_create_impl(char *name, int size,
+static uma_zone_t uma_zcache_create_impl(const char *name, int size,
     uma_ctor ctor, uma_dtor dtor, uma_init zinit, uma_fini zfini,
     uma_import zimport, uma_release zrelease, void *arg, int flags);
 static void uma_startup_impl(void);
@@ -1736,7 +1736,7 @@ uma_zcreate_impl(const char *name, size_t size, uma_ctor ctor, uma_dtor dtor,
 
 /* See uma.h */
 uma_zone_t
-uma_zcache_create(char *name, int size, uma_ctor ctor, uma_dtor dtor,
+uma_zcache_create(const char *name, int size, uma_ctor ctor, uma_dtor dtor,
 		    uma_init zinit, uma_fini zfini, uma_import zimport,
 		    uma_release zrelease, void *arg, int flags)
 {
@@ -1746,7 +1746,7 @@ uma_zcache_create(char *name, int size, uma_ctor ctor, uma_dtor dtor,
 }
 
 static uma_zone_t
-uma_zcache_create_impl(char *name, int size, uma_ctor ctor, uma_dtor dtor,
+uma_zcache_create_impl(const char *name, int size, uma_ctor ctor, uma_dtor dtor,
 		    uma_init zinit, uma_fini zfini, uma_import zimport,
 		    uma_release zrelease, void *arg, int flags)
 {
