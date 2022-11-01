@@ -90,11 +90,14 @@ unaffinitize_thread(void)
 void* dpdk_mem_allocate(size_t align, size_t sz)
 {
     /* rte_malloc seems fast enough, otherwise we need to use mempool */
+    // XXX use spdk_malloc instead
+    //void *p=spdk_malloc(sz, align, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
     return rte_malloc("iobuf", sz, align);
 }
 
 void dpdk_mem_free(void* p, size_t sz)
 {
+    // XXX use spdk_free instead
     rte_free(p);
 }
 
