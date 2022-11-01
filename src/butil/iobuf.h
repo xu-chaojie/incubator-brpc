@@ -698,7 +698,7 @@ private:
 
 namespace iobuf {
 typedef void* (*blockmem_allocate_t)(size_t align, size_t size);
-typedef void  (*blockmem_deallocate_t)(void*);
+typedef void  (*blockmem_deallocate_t)(void*, size_t size);
 
 typedef ssize_t (*iov_function)(int fd, const struct iovec *vector,
                                    int count, off_t offset);

@@ -297,6 +297,13 @@ void reset_blockmem_allocate_and_deallocate() {
     blockmem_deallocate = default_blockmem_deallocate;
 }
 
+void set_blockmem_allocate_and_deallocate(blockmem_allocate_t a,                
+        blockmem_deallocate_t f)                                                
+{                                                                               
+    blockmem_allocate = a;                                                 
+    blockmem_deallocate = f;                                               
+} 
+
 static int iobuf_import(void *arg, void **store, int count, int flags)
 {
     constexpr int align = PAGE_SIZE;
