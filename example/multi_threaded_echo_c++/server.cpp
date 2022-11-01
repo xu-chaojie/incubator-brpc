@@ -16,9 +16,21 @@
 
 #include <gflags/gflags.h>
 #include <butil/logging.h>
+#include <butil/iobuf.h>
 #include <brpc/server.h>
+#include <uct/api/uct.h>
 #include "echo.pb.h"
 
+#if BRPC_WITH_DPDK
+#include <rte_eal.h>
+#include <rte_errno.h>
+#include <rte_thread.h>
+#include <rte_malloc.h>
+#endif
+
+#include <err.h>
+
+DEFINE_bool(use_dpdk_malloc, true, "use dpdk malloc");
 DEFINE_bool(echo_attachment, true, "Echo attachment as well");
 DEFINE_int32(port, 8002, "TCP Port of this server");
 DEFINE_int32(idle_timeout_s, -1, "Connection will be closed if there is no "
@@ -30,7 +42,7 @@ DEFINE_int32(internal_port, -1, "Only allow builtin services at this port");
 DEFINE_bool(enable_ucp, true, "Enable ucp port");
 DEFINE_string(ucp_address, "0.0.0.0", "Ucp listener address");
 DEFINE_int32(ucp_port, 13339, "Ucp listener port");
-
+ 
 namespace example {
 // Your implementation of EchoService
 class EchoServiceImpl : public EchoService {
@@ -56,6 +68,81 @@ public:
 
 DEFINE_bool(h, false, "print help information");
 
+#if BRPC_WITH_DPDK
+
+void
+unaffinitize_thread(void)
+{
+    rte_cpuset_t new_cpuset;
+    long num_cores, i;
+
+    CPU_ZERO(&new_cpuset);
+
+    num_cores = sysconf(_SC_NPROCESSORS_CONF);
+
+    /* Create a mask containing all CPUs */
+    for (i = 0; i < num_cores; i++) {
+         CPU_SET(i, &new_cpuset);
+    }
+    rte_thread_set_affinity(&new_cpuset);
+}
+
+void* dpdk_mem_allocate(size_t align, size_t sz)
+{
+    /* rte_malloc seems fast enough, otherwise we need to use mempool */
+    return rte_malloc("iobuf", sz, align);
+}
+
+void dpdk_mem_free(void* p, size_t sz)
+{
+    rte_free(p);
+}
+
+int dpdk_for_uct_alloc(void **address, size_t align,               
+                                    size_t length, const char *name)
+{
+    void *p = rte_malloc(name, length, align);
+    if (p) {
+        printf("%s, sucess allocated: %p, align: %ld, length:%ld\n", __func__, p, align, length);
+        *address = p;
+        return 0;
+    }
+    printf("failed to allocate, %s, align: %ld, length:%ld\n", __func__, align, length);
+    return -ENOMEM;
+}
+                                                                                
+int dpdk_for_uct_free(void *address, size_t length)
+{
+    printf("%s, address: %p, length:%ld\n", __func__, address, length);
+    rte_free(address);
+    return 0;
+}
+                                                                                
+void dpdk_init(int argc, char **argv)
+{
+    char *eal_argv[] = {argv[0], (char *)"--in-memory", NULL};
+
+    if (rte_eal_init(2, eal_argv) == -1) {
+        errx(1, "rte_eal_init: %s", rte_strerror(rte_errno));
+    }
+
+    /* !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+     * Following is important. Above, we didn't specify dpdk runs on every cpu,
+     * thus dpdk will default bind our thread to first cpu, and the cpu mask
+     * is inherited by pthread_create(), causes every thread in future bind to
+     * same cpu! This causes big performance problem!
+     * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+     */
+    unaffinitize_thread();
+
+    // make iobuf use dpdk malloc & free
+    butil::iobuf::set_blockmem_allocate_and_deallocate(dpdk_mem_allocate, 
+        	dpdk_mem_free);
+    uct_set_user_mem_func(dpdk_for_uct_alloc, dpdk_for_uct_free); 
+}
+
+#endif
+
 int main(int argc, char* argv[]) {
     std::string help_str = "dummy help infomation";
     GFLAGS_NS::SetUsageMessage(help_str);
@@ -67,6 +154,11 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "%s\n%s\n%s", help_str.c_str(), help_str.c_str(), help_str.c_str());
         return 0;
     }
+
+#if BRPC_WITH_DPDK
+    if (FLAGS_use_dpdk_malloc)
+	dpdk_init(argc, argv);
+#endif
 
     // Generally you only need one Server.
     brpc::Server server;

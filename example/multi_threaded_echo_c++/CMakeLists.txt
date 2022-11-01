@@ -2,6 +2,60 @@ cmake_minimum_required(VERSION 2.8.10)
 project(multi_threaded_echo_c++ C CXX)
 
 option(EXAMPLE_LINK_SO "Whether examples are linked dynamically" OFF)
+option(WITH_DPDK "Whether to build with dpdk" ON)
+set(DPDK_DIR "/usr/local/dpdk" CACHE PATH "DPDK dir")
+
+if(WITH_DPDK)
+    set(BRPC_WITH_DPDK 1)
+    set(WITH_DPDK_VAL "1")
+else()
+    set(BRPC_WITH_DPDK 0)
+    set(WITH_DPDK_VAL "0")
+endif()
+
+if(WITH_DPDK)
+
+include_directories(
+    ${DPDK_DIR}/include
+)
+
+link_directories(
+    ${DPDK_DIR}/lib
+)
+
+set(DPDK_LIBS
+ -Wl,--disable-new-dtags
+ -Wl,--push-state
+ -Wl,--whole-archive
+ -Wl,--no-as-needed
+ -Wl,--start-group
+ rte_bus_pci
+ rte_cryptodev
+ rte_dmadev
+ rte_eal
+ rte_ethdev
+ rte_hash
+ rte_kvargs
+ rte_mbuf
+ rte_mempool
+ rte_mempool_ring
+ rte_net
+ rte_pci
+ rte_power
+ rte_rcu
+ rte_ring
+ rte_telemetry
+ rte_vhost
+ rte_meter
+ rte_timer
+ rte_stack
+ -Wl,--end-group
+ -Wl,--no-whole-archive
+ -Wl,--pop-state
+)
+
+link_libraries(${DPDK_LIBS})
+endif(WITH_DPDK)
 
 execute_process(
     COMMAND bash -c "find ${PROJECT_SOURCE_DIR}/../.. -type d -regex \".*output/include$\" | head -n1 | xargs dirname | tr -d '\n'"
@@ -69,6 +123,8 @@ endif()
 
 set(CMAKE_CPP_FLAGS "${DEFINE_CLOCK_GETTIME} -DGFLAGS_NS=${GFLAGS_NS}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CPP_FLAGS} -DNDEBUG -D__const__= -pipe -W -Wall -Wno-unused-parameter -fPIC -fno-omit-frame-pointer")
+set(CMAKE_CPP_FLAGS "${DEFINE_CLOCK_GETTIME} -mssse3 -DBRPC_WITH_DPDK=${WITH_DPDK_VAL} -DGFLAGS_NS=${GFLAGS_NS}")
+set(CMAKE_CXX_FLAGS "${CMAKE_CPP_FLAGS} -DNDEBUG -O2 -D__const__= -pipe -W -Wall -Wno-unused-parameter -fPIC -fno-omit-frame-pointer")
 #set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DBRPC_ENABLE_CPU_PROFILER")
 
 if(CMAKE_VERSION VERSION_LESS "3.1.3")
