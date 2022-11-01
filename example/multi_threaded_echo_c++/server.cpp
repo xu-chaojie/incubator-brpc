@@ -98,26 +98,38 @@ void dpdk_mem_free(void* p, size_t sz)
     rte_free(p);
 }
 
-int dpdk_for_uct_alloc(void **address, size_t align,               
-                                    size_t length, const char *name)
+int dpdk_for_uct_alloc(void **address, size_t align,
+                      size_t length, const char *name)
 {
+    char buf[128];
     void *p = rte_malloc(name, length, align);
+    //void *p=spdk_malloc(length, align, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
     if (p) {
-        printf("%s, sucess allocated: %p, align: %ld, length:%ld\n", __func__, p, align, length);
         *address = p;
+        snprintf(buf, sizeof(buf),
+            "%s, sucess allocated: %p, align: %ld, length:%ld, name:%s\n", 
+            __func__, p, align, length, name);
+        LOG(INFO) << buf;
         return 0;
     }
-    printf("failed to allocate, %s, align: %ld, length:%ld\n", __func__, align, length);
+    snprintf(buf, sizeof(buf),
+        "%s failed to allocate, align: %ld, length:%ld\n",
+        __func__, align, length);
+    LOG(INFO) << buf;
     return -ENOMEM;
 }
-                                                                                
+
 int dpdk_for_uct_free(void *address, size_t length)
 {
-    printf("%s, address: %p, length:%ld\n", __func__, address, length);
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%s, address: %p, length:%ld\n",
+             __func__, address, length);
+    LOG(INFO) << buf;
     rte_free(address);
+    //spdk_free(address);
     return 0;
 }
-                                                                                
+
 void dpdk_init(int argc, char **argv)
 {
     char *eal_argv[] = {argv[0], (char *)"--in-memory", NULL};
@@ -138,6 +150,7 @@ void dpdk_init(int argc, char **argv)
     // make iobuf use dpdk malloc & free
     butil::iobuf::set_blockmem_allocate_and_deallocate(dpdk_mem_allocate, 
         	dpdk_mem_free);
+    // make ucx use dpdk malloc & free
     uct_set_user_mem_func(dpdk_for_uct_alloc, dpdk_for_uct_free); 
 }
 
@@ -157,7 +170,7 @@ int main(int argc, char* argv[]) {
 
 #if BRPC_WITH_DPDK
     if (FLAGS_use_dpdk_malloc)
-	dpdk_init(argc, argv);
+        dpdk_init(argc, argv);
 #endif
 
     // Generally you only need one Server.
