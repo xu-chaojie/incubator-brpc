@@ -1946,7 +1946,7 @@ ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, iobuf_ucp_iov_t 
 {
     auto &vec = *_vec;
     int &nvec = *_nvec;
-    size_t block_size = 0, space = 0;
+    size_t left = 0, block_size = 0, space = 0;
     Block* prev_p = NULL;
     Block* p = _block;
     int size_hint;
@@ -1959,9 +1959,16 @@ ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, iobuf_ucp_iov_t 
         block_size = 1024 * 1024;
     size_hint = (max_count + block_size - 1) & ~(block_size - 1);
     vec.reserve(size_hint);
-
     nvec = 0;
     do {
+        left = max_count - space;
+    	if (left < 64 * 1024)
+            block_size = DEFAULT_BLOCK_SIZE;
+        else if (left < 1024 * 1024)
+            block_size = 64 * 1024;
+        else
+            block_size = 1024 * 1024;
+
         if (vec.size() < (size_t)nvec + 1)
             vec.resize(nvec+1);
         if (p == NULL) {
