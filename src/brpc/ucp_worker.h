@@ -25,6 +25,7 @@
 #include "butil/endpoint.h"
 #include "butil/_pctrie.h"
 #include <ucp/api/ucp.h> 
+#include <ucs/datastruct/callbackq.h>
 #include <list>
 #include <map>
 #include <queue>
@@ -53,7 +54,8 @@ public:
     void MaybeWakeup();
     void DispatchExternalEvent(EventCallbackRef e);
     pthread_t Owner() const { return worker_tid_; }
-
+    int AddCallback(unsigned (*cb)(void *), void *arg);
+    void RemoveCallback(int id);
     void * operator new(size_t);
     void operator delete(void *);
 
@@ -113,6 +115,7 @@ private:
     void HandleHello(const UcpConnectionRef &conn, UcpAmMsg *msg);
     void HandleHelloReply(const UcpConnectionRef &conn, UcpAmMsg *msg);
     void DispatchExternalEventLocked(EventCallbackRef e);
+    void DispatchCallback();
 
     void AddConnection(UcpConnection *conn);
     void RemoveConnection(const ucp_ep_h ep);
@@ -149,6 +152,8 @@ private:
     // Ucp worker for acceptor
     ucp_worker_h ucp_worker_;
     bool out_of_order_;
+
+    ucs_callbackq_t callback_q_;
 
     std::queue<UcpConnectionRef> data_ready_;
     UcpAmList msg_q_;

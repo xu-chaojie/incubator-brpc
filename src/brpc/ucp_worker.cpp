@@ -250,6 +250,7 @@ UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
     // STL map which may be a red-black tree.
     butil::pctrie_init(&conn_map_);
     CHECK(pad_buf_.resize(NVME_MAX_ALIGN) == 0);
+    CHECK(ucs_callbackq_init(&callback_q_) == UCS_OK);
 }
 
 UcpWorker::~UcpWorker()
@@ -267,6 +268,21 @@ void *UcpWorker::operator new(size_t size)
 void UcpWorker::operator delete(void *ptr)
 {
     free(ptr);
+}
+
+int UcpWorker::AddCallback(unsigned (*cb)(void *), void *arg)
+{
+    int id;
+
+    BAIDU_SCOPED_LOCK(mutex_);
+    id = ucs_callbackq_add(&callback_q_, cb, arg, UCS_CALLBACKQ_FLAG_FAST);
+    return id;
+}
+
+void UcpWorker::RemoveCallback(int id)
+{
+    BAIDU_SCOPED_LOCK(mutex_);
+    ucs_callbackq_remove(&callback_q_, id);
 }
 
 void UcpWorker::AddConnection(UcpConnection *conn)
@@ -447,6 +463,11 @@ void UcpWorker::InvokeExternalEvents()
     // assert(mutex_.is_locked_by_me());
 }
 
+void UcpWorker::DispatchCallback()
+{
+    ucs_callbackq_dispatch(&callback_q_);
+}
+
 bool UcpWorker::SetAmCallback()
 {
     ucp_am_handler_param_t  param;
@@ -507,6 +528,7 @@ again:
         DispatchDataReady();
         CheckExitingEp();
         RecycleWorkerData();
+        DispatchCallback();
         InvokeExternalEvents();
         ucs_status_t stat = !FLAGS_brpc_ucp_worker_busy_poll ?
             ucp_worker_arm(ucp_worker_) : UCS_OK;

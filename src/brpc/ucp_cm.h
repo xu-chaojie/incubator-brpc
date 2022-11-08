@@ -52,6 +52,8 @@ public:
     int Connect(const butil::EndPoint &peer);
     UcpConnectionRef GetConnection(int fd1);
 
+    UcpWorker *GetWorker();
+
 private:
     struct ConnectionOptions {
         ucp_conn_request_h req;
@@ -101,6 +103,10 @@ private:
 };
 
 UcpCm* get_or_create_ucp_cm();
+
+void *ucp_register_worker_callback(unsigned (*cb)(void *arg), void *arg);
+void ucp_notify_worker_callback(void *handle);
+void ucp_remove_worker_callback(void *handle);
 
 } // namespace brpc
 #endif

@@ -39,6 +39,13 @@
 // 
 namespace brpc {
 
+namespace {
+    struct WorkerCallback {
+        UcpWorker *worker;
+        int id;
+    };
+}
+
 // 系统一共有多少个Ucp Worker，基本上一个就够了。
 DEFINE_int32(brpc_ucp_workers, 1, "Number of ucp workers");
 
@@ -396,6 +403,34 @@ void UcpCm::ReplaceFd1(int fd1, const Fd1Item &item)
     conn->Close();
     conn.reset();
     mutex_.lock();
+}
+
+UcpWorker *UcpCm::GetWorker()
+{
+    return pool_->GetWorker();
+}
+
+// 允许添加callback到worker, 以便集成其他polling功能，例如spdk nvme polling
+void *ucp_register_worker_callback(unsigned (*cb)(void *arg), void *arg)
+{
+    UcpWorker *worker = get_or_create_ucp_cm()->GetWorker();
+    WorkerCallback *cb_data = new WorkerCallback;
+    cb_data->worker = worker;
+    cb_data->id = worker->AddCallback(cb, arg);
+    return cb_data;
+}
+
+void ucp_notify_worker_callback(void *handle)
+{
+    WorkerCallback *cb_data = (WorkerCallback *)handle;
+    cb_data->worker->MaybeWakeup();
+}
+
+void ucp_remove_worker_callback(void *handle)
+{
+    WorkerCallback *cb_data = (WorkerCallback *)handle;
+    cb_data->worker->RemoveCallback(cb_data->id);
+    delete cb_data;
 }
 
 } // namespace brpc
