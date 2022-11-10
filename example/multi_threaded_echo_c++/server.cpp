@@ -19,6 +19,8 @@
 #include <butil/iobuf.h>
 #include <brpc/server.h>
 #include <uct/api/uct.h>
+#include <brpc/ucp_cm.h>
+
 #include "echo.pb.h"
 
 #if BRPC_WITH_DPDK
@@ -29,6 +31,14 @@
 #endif
 
 #include <err.h>
+
+#include <pfs_api.h>
+#include <pfsd.h>
+#include <pfsd_sdk.h> 
+#include <pfsd_sdk_log.h>
+#include <pfs_spdk.h>
+#include <pfs_trace_func.h>
+#include <pfs_option_api.h>
 
 DEFINE_bool(use_dpdk_malloc, true, "use dpdk malloc");
 DEFINE_bool(echo_attachment, true, "Echo attachment as well");
@@ -43,6 +53,43 @@ DEFINE_bool(enable_ucp, true, "Enable ucp port");
 DEFINE_string(ucp_address, "0.0.0.0", "Ucp listener address");
 DEFINE_int32(ucp_port, 13339, "Ucp listener port");
  
+#define SHM_DIR "/dev/shm/pfsd"
+
+DEFINE_bool(daemon, false, "become daemon process");
+DEFINE_int32(server_id, 0, "PFSD server id");
+DEFINE_string(pbd_name, "", "PBD name");
+DEFINE_string(shm_dir, SHM_DIR, "pfsd shared memory dir");
+DEFINE_int32(pollers, 2, "PFSD pollers");
+DEFINE_int32(workers, 50, "PFSD pollers");
+DEFINE_string(spdk_nvme_controller, "", "SPDK nvme controller");
+DEFINE_string(spdk_rpc_address, "/tmp/pfs_spdk.sock", "SPDK rpc address");
+DEFINE_int32(pfs_spdk_driver_poll_delay, 0, "spdk driver poller delay");
+
+void set_ucp_callback()
+{
+	struct pfs_spdk_driver_poller poller;
+
+	brpc::get_or_create_ucp_cm();
+	poller.register_callback = brpc::ucp_register_worker_callback;
+	poller.notify_callback = brpc::ucp_notify_worker_callback;
+	poller.remove_callback = brpc::ucp_remove_worker_callback;
+	pfs_spdk_set_driver_poller(&poller);
+}
+
+void set_pfs_options()
+{
+	pfs_option_set("daemon", FLAGS_daemon);
+	pfs_option_set("server_id", FLAGS_server_id);
+	pfs_option_set("pbd_name", FLAGS_pbd_name);
+	pfs_option_set("shm_dir", FLAGS_shm_dir);
+	pfs_option_set("pollers", FLAGS_pollers);
+	pfs_option_set("workers", FLAGS_workers);
+	pfs_option_set("spdk_nvme_controller", FLAGS_spdk_nvme_controller);
+	pfs_option_set("spdk_rpc_address", FLAGS_spdk_rpc_address);
+	pfs_option_set("pfs_spdk_driver_poll_delay", FLAGS_pfs_spdk_driver_poll_delay);
+}
+
+
 namespace example {
 // Your implementation of EchoService
 class EchoServiceImpl : public EchoService {
@@ -135,6 +182,7 @@ int dpdk_for_uct_free(void *address, size_t length)
 
 void dpdk_init(int argc, char **argv)
 {
+#if 0
     char *eal_argv[] = {argv[0], (char *)"--in-memory", NULL};
 
     if (rte_eal_init(2, eal_argv) == -1) {
@@ -149,6 +197,7 @@ void dpdk_init(int argc, char **argv)
      * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
      */
     unaffinitize_thread();
+#endif
 
     // make iobuf use dpdk malloc & free
     butil::iobuf::set_blockmem_allocate_and_deallocate(dpdk_mem_allocate, 
@@ -171,9 +220,20 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
+    set_pfs_options();
+
 #if BRPC_WITH_DPDK
+    if (pfs_spdk_setup())
+        return 1;
+
     if (FLAGS_use_dpdk_malloc)
         dpdk_init(argc, argv);
+
+    set_ucp_callback();
+
+    if (pfsd_start(1))
+        return 1;
+
 #endif
 
     // Generally you only need one Server.
@@ -208,5 +268,11 @@ int main(int argc, char* argv[]) {
 
     // Wait until Ctrl-C is pressed, then Stop() and Join() the server.
     server.RunUntilAskedToQuit();
+
+#if BRPC_WITH_DPDK
+    pfsd_stop();
+    pfsd_wait_stop();
+    pfs_spdk_cleanup();
+#endif
     return 0;
 }

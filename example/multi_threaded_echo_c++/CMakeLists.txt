@@ -4,6 +4,8 @@ project(multi_threaded_echo_c++ C CXX)
 option(EXAMPLE_LINK_SO "Whether examples are linked dynamically" OFF)
 option(WITH_DPDK "Whether to build with dpdk" ON)
 set(DPDK_DIR "/usr/local/dpdk" CACHE PATH "DPDK dir")
+set(SPDK_DIR "/usr/local/spdk" CACHE PATH "SPDK dir")
+set(PFSD_DIR "/usr/local/curvestore/pfsd" CACHE PATH "pfsd dir")
 
 if(WITH_DPDK)
     set(BRPC_WITH_DPDK 1)
@@ -14,6 +16,25 @@ else()
 endif()
 
 if(WITH_DPDK)
+include_directories(
+    ${PFSD_DIR}/include
+)
+
+set(PFSD_LIB
+    -L${PFSD_DIR}/lib
+    -Wl,--push-state
+    -Wl,--no-as-needed
+    -Wl,--whole-archive
+    -Bstatic
+    pfsd_svr
+    pfs
+    -Wl,--no-whole-archive
+    -Wl,--pop-state
+)
+
+include_directories(
+    ${SPDK_DIR}/include
+)
 
 include_directories(
     ${DPDK_DIR}/include
@@ -54,7 +75,45 @@ set(DPDK_LIBS
  -Wl,--pop-state
 )
 
-link_libraries(${DPDK_LIBS})
+set(SPDK_LIBS
+ -L${SPDK_DIR}/lib
+ -Wl,--disable-new-dtags
+ -Wl,--push-state
+ -Wl,--no-as-needed
+ -Wl,--whole-archive
+ -Wl,--start-group
+ -Bstatic
+ spdk_bdev_aio
+ spdk_bdev_null
+ spdk_bdev_nvme
+ spdk_nvme
+ spdk_env_dpdk
+ spdk_sock_posix
+ spdk_event
+ spdk_event_bdev
+ spdk_bdev
+ spdk_notify
+ spdk_dma
+ spdk_event_accel
+ spdk_accel
+ spdk_event_vmd
+ spdk_vmd
+ spdk_event_sock
+ spdk_init
+ spdk_thread
+ spdk_trace
+ spdk_sock
+ spdk_rpc
+ spdk_jsonrpc
+ spdk_json
+ spdk_util
+ spdk_log
+ -Wl,--end-group
+ -Wl,--no-whole-archive
+)
+
+set(SPDK_DEPS rt uuid numa crypto bsd m aio dl)
+
 endif(WITH_DPDK)
 
 execute_process(
@@ -190,4 +249,4 @@ add_executable(multi_threaded_echo_client client.cpp ${PROTO_SRC} ${PROTO_HEADER
 add_executable(multi_threaded_echo_server server.cpp ${PROTO_SRC} ${PROTO_HEADER})
 
 target_link_libraries(multi_threaded_echo_client ${BRPC_LIB} ${DYNAMIC_LIB}) # ${GPERFTOOLS_LIBRARIES})
-target_link_libraries(multi_threaded_echo_server ${BRPC_LIB} ${DYNAMIC_LIB}) # ${GPERFTOOLS_LIBRARIES})
+target_link_libraries(multi_threaded_echo_server ${PFSD_LIB} ${SPDK_LIBS} ${SPDK_DEPS} ${DPDK_LIBS} ${BRPC_LIB} ${DYNAMIC_LIB}) # ${GPERFTOOLS_LIBRARIES})
