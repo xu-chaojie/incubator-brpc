@@ -1030,10 +1030,6 @@ void UcpWorker::Release(UcpConnectionRef conn)
      * UCP_ERR_HANDLING_MODE_PEER
      */
     int mode = UCP_EP_CLOSE_MODE_FLUSH;
-    if (conn->conn_was_reset_) {
-        if (!FLAGS_brpc_ucp_always_flush)
-            mode = UCP_EP_CLOSE_MODE_FORCE;
-    }
     request = ucp_ep_close_nb(ep, mode);
     if (request == NULL) {
         conn->ep_ = NULL;
@@ -1041,7 +1037,7 @@ void UcpWorker::Release(UcpConnectionRef conn)
         return;
     } else if (UCS_PTR_IS_ERR(request)) {
         conn->ep_ = NULL;
-        DLOG(ERROR) << "ucp_ep_close_nb(" << conn->remote_side_str_
+        LOG(ERROR) << "ucp_ep_close_nb(" << conn->remote_side_str_
                    << ") failed with status ("
                    << ucs_status_string(UCS_PTR_STATUS(request)) << ")";
         return;
