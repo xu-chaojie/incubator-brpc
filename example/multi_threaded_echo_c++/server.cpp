@@ -36,7 +36,7 @@
 #include <pfsd.h>
 #include <pfsd_sdk.h> 
 #include <pfsd_sdk_log.h>
-#include <pfs_spdk.h>
+#include <pfs_spdk_api.h>
 #include <pfs_trace_func.h>
 #include <pfs_option_api.h>
 
@@ -78,15 +78,15 @@ void set_ucp_callback()
 
 void set_pfs_options()
 {
-	pfs_option_set("daemon", FLAGS_daemon);
-	pfs_option_set("server_id", FLAGS_server_id);
-	pfs_option_set("pbd_name", FLAGS_pbd_name);
-	pfs_option_set("shm_dir", FLAGS_shm_dir);
-	pfs_option_set("pollers", FLAGS_pollers);
-	pfs_option_set("workers", FLAGS_workers);
-	pfs_option_set("spdk_nvme_controller", FLAGS_spdk_nvme_controller);
-	pfs_option_set("spdk_rpc_address", FLAGS_spdk_rpc_address);
-	pfs_option_set("pfs_spdk_driver_poll_delay", FLAGS_pfs_spdk_driver_poll_delay);
+	pfs_option_set_int("daemon", FLAGS_daemon);
+	pfs_option_set_int("server_id", FLAGS_server_id);
+	pfs_option_set("pbd_name", FLAGS_pbd_name.c_str());
+	pfs_option_set("shm_dir", FLAGS_shm_dir.c_str());
+	pfs_option_set_int("pollers", FLAGS_pollers);
+	pfs_option_set_int("workers", FLAGS_workers);
+	pfs_option_set("spdk_nvme_controller", FLAGS_spdk_nvme_controller.c_str());
+	pfs_option_set("spdk_rpc_address", FLAGS_spdk_rpc_address.c_str());
+	pfs_option_set_int("pfs_spdk_driver_poll_delay", FLAGS_pfs_spdk_driver_poll_delay);
 }
 
 
