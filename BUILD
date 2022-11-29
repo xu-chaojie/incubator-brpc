@@ -81,6 +81,20 @@ LINKOPTS = [
     "//conditions:default": [],
 })
 
+UCX_COPTS = ["-Iexternal/ucx"]
+
+UCX_LINKOPTS = [
+    "-L/usr/local/ucx/lib",
+    "-Wl,-rpath=/usr/local/ucx/lib",
+    "-lucp",
+    "-luct",
+    "-lucm",
+    "-lucs",
+    "-lucs_signal",
+]
+
+UCX_DEPS = ["//external:ucx_headers"]
+
 genrule(
     name = "config_h",
     outs = [
@@ -218,7 +232,16 @@ BUTIL_SRCS = [
     "src/butil/iobuf.cpp",
     "src/butil/binary_printer.cpp",
     "src/butil/popen.cpp",
-] + select({
+    "src/butil/refcountedobj.h",
+    "src/butil/refcountedobj.cpp",
+    "src/butil/pctrie.h",
+    "src/butil/pctrie.cc",
+    "src/butil/lfstack.cpp",
+] + glob([
+    "src/butil/uma/**/*.h",
+    "src/butil/uma/**/*.c",
+    "src/butil/uma/**/*.cpp",
+]) + select({
         ":darwin": [
             "src/butil/time/time_mac.cc",
             "src/butil/mac/scoped_mach_port.cc",
@@ -316,7 +339,7 @@ cc_library(
         ":with_glog": ["@com_github_google_glog//:glog"],
         ":darwin": [":macos_lib"],
         "//conditions:default": [],
-    }),
+    }) + UCX_DEPS,
     includes = [
         "src/",
     ],
@@ -326,7 +349,9 @@ cc_library(
             "-DUNIT_TEST",
         ],
         "//conditions:default": [],
-    }),
+    }) + [
+        "-DIOBUF_NO_UMA_BVAR",
+    ] + UCX_COPTS,
     linkopts = LINKOPTS,
     visibility = ["//visibility:public"],
 )
@@ -454,6 +479,7 @@ brpc_proto_library(
     visibility = ["//visibility:public"],
 )
 
+
 cc_library(
     name = "brpc",
     srcs = glob([
@@ -487,7 +513,7 @@ cc_library(
         "@com_github_google_leveldb//:leveldb",
     ],
     copts = COPTS,
-    linkopts = LINKOPTS,
+    linkopts = LINKOPTS + UCX_LINKOPTS,
     visibility = ["//visibility:public"],
 )
 
@@ -505,3 +531,15 @@ cc_binary(
     visibility = ["//visibility:public"],
 )
 
+filegroup(
+    name = "all",
+    srcs = [
+        ":butil",
+        ":bvar",
+        ":bthread",
+        ":brpc",
+        ":mcpack2pb",
+        ":cc_brpc_idl_options_proto",
+        ":cc_brpc_internal_proto",
+    ]
+)

@@ -42,8 +42,10 @@
 #include "butil/uma/uma/time.h"
 #include "butil/uma/uma/malloc.h"	    // For M_ZERO
 #include "butil/lfstack.h"
-#include "bvar/bvar.h"
 #include "ucm/api/ucm.h"
+#ifndef IOBUF_NO_UMA_BVAR
+#include "bvar/bvar.h"
+#endif
 
 namespace butil {
 namespace iobuf {
@@ -51,14 +53,17 @@ namespace iobuf {
 #define SIZE_64K    (64 * 1024)
 #define SIZE_1M     (1024 * 1024)
 
+#ifndef IOBUF_NO_UMA_BVAR
 static int get_uma_iobuf_count(void *arg);
 static int get_uma_block_count(void *arg);
 static int get_64K_count(void *arg);
 static int get_1M_count(void *arg);
+#endif
 
 DEFINE_int32(butil_iobuf_64K_max, 1600, "Maximum number of 64k blocks cached");
 DEFINE_int32(butil_iobuf_1M_max, 100, "Maximum number of 1M blocks cached");
 
+#ifndef IOBUF_NO_UMA_BVAR
 bvar::PassiveStatus<int> g_iobuf_64k_count("64K iobuf", get_64K_count, NULL);
 bvar::Adder<int> g_iobuf_64k_overflow("64K iobuf cache overflow");
 bvar::PassiveStatus<int> g_iobuf_1M_count("1M iobuf", get_1M_count, NULL);
@@ -67,6 +72,7 @@ bvar::PassiveStatus<int> g_iobuf_zone_obj_count("iobuf uma count",
     get_uma_iobuf_count, NULL);
 bvar::PassiveStatus<int> g_block_zone_obj_count("block uma count",
     get_uma_block_count, NULL);
+#endif
 
 static pthread_once_t uma_start_once = PTHREAD_ONCE_INIT;
 static uma_zone_t iobuf_zone;
@@ -80,6 +86,7 @@ static inline void start_uma()
     pthread_once(&uma_start_once, do_start_uma);
 }
 
+#ifndef IOBUF_NO_UMA_BVAR
 static int get_uma_iobuf_count(void *)
 {
     return iobuf_zone ? uma_zone_get_cur(iobuf_zone) : 0;
@@ -99,6 +106,7 @@ static int get_1M_count(void *)
 {
     return iobuf_1M_cache.size();
 }
+#endif
 
 typedef ssize_t (*iov_function)(int fd, const struct iovec *vector,
                                    int count, off_t offset);
@@ -370,6 +378,7 @@ static void do_blockmem_deallocate(void *mem, size_t size)
             LOG(WARNING) << "64k iobuf cache overflow";
         }
 
+#ifndef IOBUF_NO_UMA_BVAR
         g_iobuf_64k_overflow << 1;
     } else if (size == SIZE_1M) {
         static struct timeval tv_1M_last = {0, 0};
@@ -381,7 +390,9 @@ static void do_blockmem_deallocate(void *mem, size_t size)
             LOG(WARNING) << "1M iobuf cache overflow";
         }
 
+#ifndef IOBUF_NO_UMA_BVAR
         g_iobuf_1M_overflow << 1;
+#endif
     } else {
         call_blockmem_deallocate(mem, size);
     }
