@@ -31,38 +31,10 @@
 
 namespace brpc {
 
-static bool validate_err_mode(const char* flagname, const std::string& mode);
-
 DEFINE_int32(brpc_set_cpu_latency, -1, "Set cpu latency in microseconds");
-
-//
-// We default use error mode NONE because it is faster and BRPC is already
-// handling timeout correctly.
-//
-DEFINE_string(brpc_ucp_error_mode, "none", "Ucp error mode(none,peer");
-DEFINE_validator(brpc_ucp_error_mode, &validate_err_mode);
 
 static UcpContext *g_ucp_ctx;
 static pthread_once_t g_ucp_ctx_init = PTHREAD_ONCE_INIT;
-
-static bool validate_err_mode(const char* flagname,
-    const std::string& mode)
-{
-    if (!strcasecmp(mode.c_str(), "none") ||
-        !strcasecmp(mode.c_str(), "peer"))
-        return true;
-
-    fprintf(stderr, "Invalid value for --%s: %s\n", flagname, mode.c_str());
-    return false;
-}
-
-static ucp_err_handling_mode_t get_error_mode(void)
-{
-    if (!strcasecmp(FLAGS_brpc_ucp_error_mode.c_str(), "none")) {
-        return UCP_ERR_HANDLING_MODE_NONE;
-    }
-    return UCP_ERR_HANDLING_MODE_PEER;
-}
 
 //
 // Disable cpu power-saving mode may reduce DMA latency. If you don't
@@ -251,7 +223,7 @@ int create_ucp_ep(ucp_worker_h w, const butil::EndPoint &endpoint,
                                  UCP_EP_PARAM_FIELD_SOCK_ADDR   |
                                  UCP_EP_PARAM_FIELD_ERR_HANDLER |
                                  UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
-    ep_params.err_mode         = get_error_mode();
+    ep_params.err_mode         = UCP_ERR_HANDLING_MODE_PEER;
     ep_params.err_handler.cb   = err_cb;
     ep_params.err_handler.arg  = err_arg;
     ep_params.flags            = UCP_EP_PARAMS_FLAGS_CLIENT_SERVER;

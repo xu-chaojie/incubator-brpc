@@ -1046,16 +1046,12 @@ void UcpWorker::Release(UcpConnectionRef conn)
 
     CancelRequests(conn);
 
-    /*
-     * It is better to set mode to FLUSH, it is too diffcult to use 
-     * UCP_EP_CLOSE_MODE_FORCE, as it requires both sides to use
-     * UCP_ERR_HANDLING_MODE_PEER
-     */
-    int mode = UCP_EP_CLOSE_MODE_FLUSH;
+    int mode = UCP_EP_CLOSE_MODE_FORCE;
     request = ucp_ep_close_nb(ep, mode);
     if (request == NULL) {
         conn->ep_ = NULL;
-        DLOG(INFO) << "closed ep " << ep;
+        LOG(INFO) << "ucp_ep_close_nb(" << conn->remote_side_str_
+                  << ") success";
         return;
     } else if (UCS_PTR_IS_ERR(request)) {
         conn->ep_ = NULL;
@@ -1082,13 +1078,13 @@ void UcpWorker::CheckExitingEp()
         next = it;
         next++;
         ucs_status_t status;
-        ucp_ep_h ep = it->ep;
         ucs_status_ptr_t request = it->req;
         UcpConnectionRef conn = it->conn;
         status = ucp_request_check_status(request);
         if (status == UCS_INPROGRESS)
             continue;
-        DLOG(INFO) << "closed ep " << ep;
+        LOG(INFO) << "ucp_ep_close_nb(" << conn->remote_side_str_
+                  << ") success later";
         ucp_request_release(request);
         conn->ep_ = NULL;
         next = exiting_ep_.erase(it);
