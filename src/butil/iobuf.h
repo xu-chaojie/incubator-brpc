@@ -66,7 +66,6 @@ friend class IOBufBytesIterator;
 public:
     static const size_t DEFAULT_BLOCK_SIZE = 8192;
     static const size_t INITIAL_CAP = 32; // must be power of 2
-    static const size_t NVME_SGL_ALIGN = 4;
     struct Block;
 
     // can't directly use `struct iovec' here because we also need to access the
