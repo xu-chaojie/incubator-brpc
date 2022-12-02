@@ -1228,9 +1228,13 @@ bool UcpWorker::KeepSendRequest(void)
     for (msg = prev; msg; msg = next) {
         next = msg->link.tqe_next;
 
-        SetupSendRequestParam(msg, &param, &buf, &len);
-
         UcpConnectionRef &conn = msg->conn;
+        if (conn->state_ == UcpConnection::STATE_CLOSED || conn->ep_ == NULL) {
+            /* already closed */
+            UcpAmSendInfo::Release(msg);
+            continue;
+        }
+        SetupSendRequestParam(msg, &param, &buf, &len);
         TAILQ_INSERT_TAIL(&conn->send_q_, msg, link);
 
         msg->req = ucp_am_send_nbx(conn->ep_, AM_ID, &msg->header,
@@ -1247,8 +1251,6 @@ bool UcpWorker::KeepSendRequest(void)
             LOG(ERROR) << "Failed to ucp_am_send_nbx("
                        << ucs_status_string(st) << ")";
         }
-
-        msg = next;
     }
     return true;
 }
