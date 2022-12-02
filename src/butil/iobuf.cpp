@@ -2360,7 +2360,6 @@ IOBufAsZeroCopyOutputStream::~IOBufAsZeroCopyOutputStream() {
 }
 
 bool IOBufAsZeroCopyOutputStream::Next(void** data, int* size) {
-try_again:
     if (_cur_block == NULL || _cur_block->full()) {
         _release_block();
         if (_block_size > 0) {
@@ -2372,16 +2371,6 @@ try_again:
             return false;
         }
     }
-    uint32_t cur_size = _cur_block->size;
-    cur_size = roundup(cur_size, IOBuf::NVME_SGL_ALIGN);
-    if (cur_size + IOBuf::NVME_SGL_ALIGN > _cur_block->cap) {
-        // at least have NVME_SGL_ALIGN bytes space for nvme SGL alignment
-        _cur_block->dec_ref();
-        _cur_block = NULL;
-        goto try_again;
-    }
-
-    _cur_block->size = cur_size;
     const IOBuf::BlockRef r = { _cur_block->size, 
                                 (uint32_t)_cur_block->left_space(),
                                 _cur_block };
