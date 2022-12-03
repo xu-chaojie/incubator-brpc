@@ -140,9 +140,9 @@ if (NOT THRIFTNB_LIB)
     set(THRIFTNB_LIB "")
 endif()
 
-find_path(GPERFTOOLS_INCLUDE_DIR NAMES gperftools/heap-profiler.h)
-find_library(GPERFTOOLS_LIBRARIES NAMES tcmalloc_and_profiler)
-include_directories(${GPERFTOOLS_INCLUDE_DIR})
+#find_path(GPERFTOOLS_INCLUDE_DIR NAMES gperftools/heap-profiler.h)
+#find_library(GPERFTOOLS_LIBRARIES NAMES tcmalloc_and_profiler)
+#include_directories(${GPERFTOOLS_INCLUDE_DIR})
 
 find_path(BRPC_INCLUDE_PATH NAMES brpc/server.h)
 if(EXAMPLE_LINK_SO)

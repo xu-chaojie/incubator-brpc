@@ -1229,7 +1229,7 @@ bool UcpWorker::KeepSendRequest(void)
         next = msg->link.tqe_next;
 
         UcpConnectionRef &conn = msg->conn;
-        if (conn->state_ == UcpConnection::STATE_CLOSED || conn->ep_ == NULL) {
+        if (BAIDU_UNLIKELY(conn->state_ == UcpConnection::STATE_CLOSED)) {
             /* already closed */
             UcpAmSendInfo::Release(msg);
             continue;
