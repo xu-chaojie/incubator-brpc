@@ -380,6 +380,7 @@ static void do_blockmem_deallocate(void *mem, size_t size)
 
 #ifndef IOBUF_NO_UMA_BVAR
         g_iobuf_64k_overflow << 1;
+#endif
     } else if (size == SIZE_1M) {
         static struct timeval tv_1M_last = {0, 0};
         if (!iobuf_1M_cache.push(mem))
@@ -1209,6 +1210,35 @@ int IOBuf::_cut_by_delim(IOBuf* out, char const* dbegin, size_t ndelim) {
         }
     }
 
+    return -1;
+}
+
+constexpr uintptr_t page_shift = PAGE_SHIFT;
+constexpr uintptr_t page_size = PAGE_SIZE;
+constexpr uintptr_t page_mask = PAGE_SIZE-1;
+
+int IOBuf::cut_until_page_end(IOBuf* out) {
+    const size_t nref = _ref_num();
+    size_t n = 0;
+    for (size_t i = 0; i < nref; ++i) {
+        IOBuf::BlockRef const& r = _ref_at(i);
+        uintptr_t page_off = ((uintptr_t)r.block->data + r.offset) & page_mask;
+        if (page_off) {
+            n = page_size - page_off;
+        } else {
+            n = 0;
+        }
+
+        if (n > r.length) {
+            LOG(ERROR) << "cut_until_page_end across two blocks"
+                       << ", r.offset: " << r.offset
+                       << ", page_mask: " << page_mask
+                       << ", page_off: " << page_off
+                       << ", n: " << n;
+            return -1;
+        }
+        return cutn(out, n);
+    }
     return -1;
 }
 
@@ -2272,6 +2302,55 @@ start:
         ivec++;
     } while (total_len);
     return nr;
+}
+
+ssize_t IOPortal::append_aligned_to_page_end(const IOBuf* buf) {
+    size_t total = buf->size();
+    uintptr_t page_off = 0;
+    size_t space = 0;
+    Block* prev_p = NULL;
+    Block* p = _block;
+    while (total) {
+        if (p == NULL) {
+            p = iobuf::create_block();
+            _release_to_tls = false;
+            if (BAIDU_UNLIKELY(!p)) {
+                errno = ENOMEM;
+                return -1;
+            }
+            if (prev_p != NULL) {
+                prev_p->portal_next = p;
+            } else {
+                _block = p;
+            }
+        }
+        size_t unaligned = total & page_mask;
+        if (unaligned)  {
+            page_off = page_size - unaligned;
+        } else {
+            page_off = 0;
+        }
+        uintptr_t block_off = (uintptr_t)p->data + p->size;
+        // block always align to page
+        if (block_off & page_mask) {
+            LOG(ERROR) << "block not align to page, block_off: " << block_off;
+            return -1;
+        }
+        block_off += page_off;
+        p->size += page_off;
+        size_t len = std::min(p->left_space(), total);
+        buf->copy_to((void *)block_off, len, space);
+        const IOBuf::BlockRef r = {p->size, (uint32_t)len, p};
+        DLOG(INFO) << "push blockref off: " << p->data + p->size
+                   << ", len: " << len;
+        _push_back_ref(r);
+        p->size += len;
+        total -= len;
+        space += len;
+        prev_p = p;
+        p = p->portal_next;
+    };
+    return space;
 }
 
 void IOPortal::return_cached_blocks_impl(Block* b, bool release_to_tls) {

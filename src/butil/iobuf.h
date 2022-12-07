@@ -150,6 +150,9 @@ public:
     // std::string version, `delim' could be binary
     int cut_until(IOBuf* out, const std::string& delim);
 
+    // cut until page end, return the bytes we cuted
+    int cut_until_page_end(IOBuf* out);
+
     // Cut at most `size_hint' bytes(approximately) into the writer
     // Returns bytes cut on success, -1 otherwise and errno is set.
     ssize_t cut_into_writer(IWriter* writer, size_t size_hint = 1024*1024);
@@ -467,6 +470,9 @@ public:
     // If `offset' is negative, does exactly what append_from_file_descriptor does.
     ssize_t pappend_from_dev_descriptor(int fd, off_t offset, size_t max_count);
 
+    //  copy from buf and append aligned to page end
+    ssize_t append_aligned_to_page_end(const IOBuf* buf);
+
     // Remove all data inside and return cached blocks.
     void clear();
 
@@ -718,6 +724,12 @@ void set_blockmem_allocate_and_deallocate(blockmem_allocate_t,
 int set_external_io_funcs(struct iobuf_io_funcs funcs);
 
 void get_external_io_funcs(struct iobuf_io_funcs *funcs);
+
+iov_function get_preadv_func();
+iov_function get_pwritev_func();
+iov_seq_function get_readv_func();
+iov_seq_function get_writev_func();
+
 }  // namespace iobuf
 }  // namespace butil
 

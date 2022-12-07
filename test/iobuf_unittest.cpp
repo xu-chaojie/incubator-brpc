@@ -4,6 +4,7 @@
 
 #include <gtest/gtest.h>
 #include <sys/types.h>
+#include <sys/user.h>                      // For PAGE_SIZE
 #include <sys/socket.h>                // socketpair
 #include <errno.h>                     // errno
 #include <fcntl.h>                     // O_RDONLY
@@ -117,6 +118,23 @@ protected:
     virtual void TearDown() {
         check_memory_leak();
     };
+
+    void set_fake_pwritev(butil::iobuf::iov_function fake_pwritev) {
+        default_io_funcs.iof_preadv = butil::iobuf::get_preadv_func();
+        default_io_funcs.iof_pwritev = butil::iobuf::get_pwritev_func();
+        default_io_funcs.iof_readv = butil::iobuf::get_readv_func();
+        default_io_funcs.iof_writev = butil::iobuf::get_writev_func();
+        butil::iobuf::iobuf_io_funcs new_io_funcs = default_io_funcs;
+        new_io_funcs.iof_pwritev = fake_pwritev;
+        butil::iobuf::set_external_io_funcs(new_io_funcs);
+    }
+
+    void reset_default_iov_function() {
+        butil::iobuf::set_external_io_funcs(default_io_funcs);
+    }
+
+ protected:
+    butil::iobuf::iobuf_io_funcs default_io_funcs;
 };
 
 std::string to_str(const butil::IOBuf& p) {
@@ -1667,6 +1685,235 @@ TEST_F(IOBufTest, acquire_tls_block) {
     b = butil::iobuf::acquire_tls_block();
     ASSERT_EQ(0, butil::iobuf::get_tls_block_count());
     ASSERT_NE(butil::iobuf::block_cap(b), butil::iobuf::block_size(b));
+}
+
+// hook to check iovec
+ssize_t check_page_aligned_pwritev(int fd, const struct iovec *vector,
+                     int count, off_t offset) {
+    ssize_t nr = 0;
+    for (int i = 0; i < count; i++) {
+        uintptr_t begin = (uintptr_t)(vector[i].iov_base);
+        size_t len = vector[i].iov_len;
+        uintptr_t end = begin + len;
+        if (i == 0) {
+            if (end & (PAGE_SIZE-1)) {
+                LOG(ERROR) << "check iovec failed, begin: " << begin
+                           << ", end: " << end
+                           << ", i: " << i
+                           << ", PAGE_SIZE: " << PAGE_SIZE;
+                return nr;
+            } else {
+                LOG(INFO) << "check iovec success, begin: " << begin
+                           << ", end: " << end
+                           << ", i: " << i
+                           << ", PAGE_SIZE: " << PAGE_SIZE;
+                nr += len;
+            }
+        } else {
+            if ((begin & (PAGE_SIZE-1)) ||
+                (end & (PAGE_SIZE-1))) {
+                LOG(ERROR) << "check iovec failed, begin: " << begin
+                           << ", end: " << end
+                           << ", i: " << i
+                           << ", PAGE_SIZE: " << PAGE_SIZE;
+                return nr;
+            } else {
+                LOG(INFO) << "check iovec success, begin: " << begin
+                           << ", end: " << end
+                           << ", i: " << i
+                           << ", PAGE_SIZE: " << PAGE_SIZE;
+                nr += len;
+            }
+        }
+    }
+    return nr;
+}
+
+TEST_F(IOBufTest, test_append_one_block_aligned_to_page_end) {
+    set_fake_pwritev(check_page_aligned_pwritev);
+    {
+        // smaller than a PAGE_SIZE
+        size_t sz = PAGE_SIZE - 100;
+        butil::IOBuf buf1;
+        buf1.resize(sz, 'a');
+
+        butil::IOPortal portal;
+        ssize_t nr = portal.append_aligned_to_page_end(&buf1);
+        ASSERT_EQ(sz, nr);
+        ASSERT_EQ(sz, portal.size());
+
+        std::string exp1;
+        exp1.resize(sz, 'a');
+
+        butil::IOBufBytesIterator it(portal);
+        for(int i = 0; it != NULL; ++it, i++) {
+            ASSERT_EQ(exp1[i], *it) << "failed at " << i;
+        }
+       
+        nr = portal.pcut_into_file_descriptor(0, 0, portal.size());
+        ASSERT_EQ(sz, nr);
+    }
+    {
+        // bigger than PAGE_SIZE
+        size_t sz = PAGE_SIZE * 2  + 100;
+        butil::IOBuf buf1;
+        buf1.resize(sz, 'a');
+
+        butil::IOPortal portal;
+        ssize_t nr = portal.append_aligned_to_page_end(&buf1);
+        ASSERT_EQ(sz, nr);
+        ASSERT_EQ(sz, portal.size());
+
+        std::string exp1;
+        exp1.resize(sz, 'a');
+
+        butil::IOBufBytesIterator it(portal);
+        for(int i = 0; it != NULL; ++it, i++) {
+            //ASSERT_EQ(exp1[i], *it) << "failed at " << i;
+        }
+
+        nr = portal.pcut_into_file_descriptor(0, 0, portal.size());
+        ASSERT_EQ(sz, nr);
+    }
+    {
+        // empty buf
+        butil::IOBuf buf1;
+
+        butil::IOPortal portal;
+        ssize_t nr = portal.append_aligned_to_page_end(&buf1);
+        ASSERT_EQ(0, nr);
+        ASSERT_EQ(0, portal.size());
+    }
+    reset_default_iov_function();
+}
+
+TEST_F(IOBufTest, test_append_two_block_aligned_to_page_end) {
+    set_fake_pwritev(check_page_aligned_pwritev);
+    {
+        size_t sz1 = PAGE_SIZE - 100;
+        size_t sz2 = PAGE_SIZE * 2  + 100;
+
+        butil::IOBuf buf1;
+        buf1.resize(sz1, 'a');
+        butil::IOBuf buf2;
+        buf2.resize(sz2, 'b');
+
+        buf2.append(buf1);
+
+        butil::IOPortal portal;
+        ssize_t nr = portal.append_aligned_to_page_end(&buf2);
+        ASSERT_EQ(sz1 + sz2, nr);
+        ASSERT_EQ(sz1 + sz2, portal.size());
+
+        std::string exp1, exp2;
+        exp1.resize(sz1, 'a');
+        exp2.resize(sz2, 'b');
+        exp2 += exp1;
+
+        butil::IOBufBytesIterator it(portal);
+        for(int i = 0; it != NULL; ++it, i++) {
+            ASSERT_EQ(exp2[i], *it) << "failed at " << i;
+        }
+       
+        nr = portal.pcut_into_file_descriptor(0, 0, portal.size());
+        ASSERT_EQ(sz1 + sz2, nr);
+    }
+    {
+    // first is align to PAGE
+        size_t sz1 = PAGE_SIZE;
+        size_t sz2 = PAGE_SIZE * 2  + 100;
+
+        butil::IOBuf buf1;
+        buf1.resize(sz1, 'a');
+        butil::IOBuf buf2;
+        buf2.resize(sz2, 'b');
+
+        buf2.append(buf1);
+
+        butil::IOPortal portal;
+        ssize_t nr = portal.append_aligned_to_page_end(&buf2);
+        ASSERT_EQ(sz1 + sz2, nr);
+        ASSERT_EQ(sz1 + sz2, portal.size());
+
+        std::string exp1, exp2;
+        exp1.resize(sz1, 'a');
+        exp2.resize(sz2, 'b');
+        exp2 += exp1;
+
+        butil::IOBufBytesIterator it(portal);
+        for(int i = 0; it != NULL; ++it, i++) {
+            ASSERT_EQ(exp2[i], *it) << "failed at " << i;
+        }
+       
+        nr = portal.pcut_into_file_descriptor(0, 0, portal.size());
+        ASSERT_EQ(sz1 + sz2, nr);
+    }
+    {
+    // second is align to PAGE
+        size_t sz1 = PAGE_SIZE - 100;
+        size_t sz2 = PAGE_SIZE;
+
+        butil::IOBuf buf1;
+        buf1.resize(sz1, 'a');
+        butil::IOBuf buf2;
+        buf2.resize(sz2, 'b');
+
+        buf2.append(buf1);
+
+        butil::IOPortal portal;
+        ssize_t nr = portal.append_aligned_to_page_end(&buf2);
+        ASSERT_EQ(sz1 + sz2, nr);
+        ASSERT_EQ(sz1 + sz2, portal.size());
+
+        std::string exp1, exp2;
+        exp1.resize(sz1, 'a');
+        exp2.resize(sz2, 'b');
+        exp2 += exp1;
+
+        butil::IOBufBytesIterator it(portal);
+        for(int i = 0; it != NULL; ++it, i++) {
+            ASSERT_EQ(exp2[i], *it) << "failed at " << i;
+        }
+
+        nr = portal.pcut_into_file_descriptor(0, 0, portal.size());
+        ASSERT_EQ(sz1 + sz2, nr);
+
+    }
+    reset_default_iov_function();
+}
+
+TEST_F(IOBufTest, test_cut_until_page_end) {
+    set_fake_pwritev(check_page_aligned_pwritev);
+
+    size_t sz = PAGE_SIZE + 100;
+
+    butil::IOBuf buf;
+    buf.resize(sz, 'a');
+
+    // use append_aligned_to_page_end to create a block align to page end
+    butil::IOPortal portal;
+    ssize_t size = portal.append_aligned_to_page_end(&buf);
+    ASSERT_EQ(sz, size);
+    ASSERT_EQ(sz, portal.size());
+
+    butil::IOBuf out;
+    int n = portal.cut_until_page_end(&out);
+    ASSERT_EQ(sz - PAGE_SIZE, n);
+
+    butil::IOBufBytesIterator it(out);
+    for(int i = 0; it != NULL; ++it, i++) {
+        ASSERT_EQ('a', *it) << "failed at " << i;
+    }
+   
+    ssize_t outsize = out.size();
+    ssize_t nr = out.pcut_into_file_descriptor(0, 0, size);
+    ASSERT_EQ(outsize, nr);
+
+    // second cut, will cut nothing
+    n = portal.cut_until_page_end(&out);
+    ASSERT_EQ(0, n);
+
+    reset_default_iov_function();
 }
 
 } // namespace
