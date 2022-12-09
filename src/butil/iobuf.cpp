@@ -1946,6 +1946,9 @@ ssize_t IOPortal::pappend_from_file_descriptor(
 
 ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, iobuf_ucp_iov_t *_vec, int *_nvec)
 {
+    // clear left behind blocks which may not be compatible with nvme PRP
+    return_cached_blocks();
+
     auto &vec = *_vec;
     int &nvec = *_nvec;
     size_t left = 0, block_size = 0, space = 0;
@@ -2011,6 +2014,9 @@ ssize_t IOPortal::append_from_buffer(size_t nr) {
             Block* const saved_next = _block->portal_next;
             _block->dec_ref();  // _block may be deleted
             _block = saved_next;
+        } else {
+            // should be last block
+            assert(NULL == _block->portal_next);
         }
     } while (total_len);
     return nr;
@@ -2122,6 +2128,7 @@ ssize_t IOPortal::pappend_from_dev_descriptor(int fd, off_t offset,
     size_t rc = 0;
 
     // PRP may can not use partial memory page
+    // throw away left behind
     return_cached_blocks();
     while (total < max_count) {
         size_t to_read = max_count - total;
@@ -2257,9 +2264,14 @@ start:
         const IOBuf::BlockRef r = { _block->size, (uint32_t)len, _block };
         _push_back_ref(r);
         _block->size += len;
-        Block* const saved_next = _block->portal_next;
-        _block->dec_ref();  // _block may be deleted
-        _block = saved_next;
+        if (_block->full()) {
+            Block* const saved_next = _block->portal_next;
+            _block->dec_ref();  // _block may be deleted
+            _block = saved_next;
+        } else {
+            // should be last block
+            assert(NULL == _block->portal_next);
+        }
         ivec++;
     } while (total_len);
     return nr;
