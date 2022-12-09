@@ -2121,6 +2121,8 @@ ssize_t IOPortal::pappend_from_dev_descriptor(int fd, off_t offset,
     size_t total = 0;
     size_t rc = 0;
 
+    // PRP may can not use partial memory page
+    return_cached_blocks();
     while (total < max_count) {
         size_t to_read = max_count - total;
         bool hit = false;
@@ -2171,11 +2173,12 @@ start:
         bool free_it = false;
         if (p == NULL) {
             // allocate a new buffer
-            p = iobuf::acquire_tls_block();
+            p = iobuf::create_block();
             if (BAIDU_UNLIKELY(!p)) {
                 errno = ENOMEM;
                 return -1;
             }
+            _release_to_tls = false;
             if (prev_p != NULL) {
                 prev_p->portal_next = p;
             } else {
@@ -2191,11 +2194,6 @@ start:
         skipped = addr2 - addr1;
         if (p->cap - p->size <= skipped)
             free_it = true;
-        else {
-            size_t left = p->cap - (p->size + skipped);
-            if (left < (page_size - page_off))
-                free_it = true;
-        }
         if (free_it) {
             // we fully used it
             p->size = p->cap; 
@@ -2259,11 +2257,9 @@ start:
         const IOBuf::BlockRef r = { _block->size, (uint32_t)len, _block };
         _push_back_ref(r);
         _block->size += len;
-        if (_block->full()) {
-            Block* const saved_next = _block->portal_next;
-            _block->dec_ref();  // _block may be deleted
-            _block = saved_next;
-        }
+        Block* const saved_next = _block->portal_next;
+        _block->dec_ref();  // _block may be deleted
+        _block = saved_next;
         ivec++;
     } while (total_len);
     return nr;
