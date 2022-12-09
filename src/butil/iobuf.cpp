@@ -2163,14 +2163,12 @@ ssize_t IOPortal::pappend_from_dev_descriptor_impl(int fd, off_t offset,
     do {
 start:
         if (p == NULL) {
-            // allocate a new buffer
-            if (nvec == 0) {
-                p = iobuf::acquire_tls_block();
-            } else {
-                // second page io address should be page aligned
-                p = iobuf::create_block();
-                _release_to_tls = false;
-            }
+            // We can not use acquire_tls_block because it returns a chain of
+            // blocks which are paritally used, and it is incompatible with
+            // NVME PRP requirements, PRP requires second iovec to be start of
+            // a page and its length is times of page size.
+            p = iobuf::create_block();
+            _release_to_tls = false;
             if (BAIDU_UNLIKELY(!p)) {
                 errno = ENOMEM;
                 return -1;
