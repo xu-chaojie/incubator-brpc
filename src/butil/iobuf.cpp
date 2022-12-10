@@ -1946,6 +1946,9 @@ ssize_t IOPortal::pappend_from_file_descriptor(
 
 ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, iobuf_ucp_iov_t *_vec, int *_nvec)
 {
+    // clear left behind blocks which may not be compatible with nvme PRP
+    return_cached_blocks();
+
     auto &vec = *_vec;
     int &nvec = *_nvec;
     size_t left = 0, block_size = 0, space = 0;
@@ -2011,6 +2014,9 @@ ssize_t IOPortal::append_from_buffer(size_t nr) {
             Block* const saved_next = _block->portal_next;
             _block->dec_ref();  // _block may be deleted
             _block = saved_next;
+        } else {
+            // should be last block
+            assert(NULL == _block->portal_next);
         }
     } while (total_len);
     return nr;
@@ -2121,6 +2127,10 @@ ssize_t IOPortal::pappend_from_dev_descriptor(int fd, off_t offset,
     size_t total = 0;
     size_t rc = 0;
 
+    // PRP may can not use partial memory page
+    // throw away left behind
+    return_cached_blocks();
+
     while (total < max_count) {
         size_t to_read = max_count - total;
         bool hit = false;
@@ -2141,37 +2151,24 @@ ssize_t IOPortal::pappend_from_dev_descriptor(int fd, off_t offset,
 
 ssize_t IOPortal::pappend_from_dev_descriptor_impl(int fd, off_t offset,
     size_t max_count, bool *max_nvec_hit) {
-#define DISK_SECTOR_SIZE 512
-    constexpr uintptr_t page_shift = PAGE_SHIFT;
-    constexpr uintptr_t page_size = PAGE_SIZE;
-    constexpr uintptr_t page_mask = PAGE_SIZE-1;
-
     iovec vec[MAX_APPEND_IOVEC];
     int nvec = 0;
     size_t space = 0;
     Block* prev_p = NULL;
     Block* p = _block;
-    size_t skipped = 0;
-    uintptr_t page_off = 0;
-    off_t offset2 = offset;
 
     *max_nvec_hit = false;
 
     // Prepare at most MAX_APPEND_IOVEC blocks or space of blocks >= max_count
     do {
 start:
-        page_off = (offset2 & page_mask);
-        if (nvec == 0) {
-            // first page, NVME PRP requires address to align to end of page
-            if (page_size - page_off > max_count) {
-                page_off = page_size - roundup(max_count, DISK_SECTOR_SIZE);
-            }
-        }
-
-        bool free_it = false;
         if (p == NULL) {
-            // allocate a new buffer
-            p = iobuf::acquire_tls_block();
+            // We can not use acquire_tls_block because it returns a chain of
+            // blocks which are paritally used, and it is incompatible with
+            // NVME PRP requirements, PRP requires second iovec to be start of
+            // a page and its length is times of page size.
+            p = iobuf::create_block();
+            _release_to_tls = false;
             if (BAIDU_UNLIKELY(!p)) {
                 errno = ENOMEM;
                 return -1;
@@ -2183,20 +2180,9 @@ start:
             }
         }
 
-        uintptr_t addr1 = 0, addr2 = 0;
-        addr1 = (uintptr_t)p->data + p->size;
-        addr2 = (addr1 & ~page_mask) + page_off;
-        if (addr2 < addr1)
-            addr2 += page_size;
-        skipped = addr2 - addr1;
-        if (p->cap - p->size <= skipped)
-            free_it = true;
-        else {
-            size_t left = p->cap - (p->size + skipped);
-            if (left < (page_size - page_off))
-                free_it = true;
-        }
-        if (free_it) {
+        // NVME PRP dword alignment
+        p->size = roundup(p->size, 4);
+        if (p->size >= p->cap) {
             // we fully used it
             p->size = p->cap; 
             if (p == _block)
@@ -2207,23 +2193,11 @@ start:
             if (prev_p)
                 prev_p->portal_next = p;
             goto start;
-        } else {
-            p->size += skipped;
         }
 
         vec[nvec].iov_base = p->data + p->size;
-        if (page_off) { // partial page
-            vec[nvec].iov_len = page_size - page_off;
-        } else { // multiple pages
-            vec[nvec].iov_len = (p->left_space() >> page_shift) << page_shift;
-        }
-        if (vec[nvec].iov_len == 0) {
-            fprintf(stderr, "%s unexpected iov_len == 0\n", __func__);
-            abort();
-        }
-        vec[nvec].iov_len = std::min(vec[nvec].iov_len, max_count - space);
+        vec[nvec].iov_len = std::min(p->left_space(), max_count - space);
         space += vec[nvec].iov_len;
-        offset2 += vec[nvec].iov_len;
         ++nvec;
         if (space >= max_count) {
             break;
@@ -2233,7 +2207,7 @@ start:
             break;
         }
         prev_p = p;
-        p = p->portal_next;
+        p = p->portal_next; // should be NULL
     } while (1);
 
     ssize_t nr = 0;
@@ -2263,6 +2237,9 @@ start:
             Block* const saved_next = _block->portal_next;
             _block->dec_ref();  // _block may be deleted
             _block = saved_next;
+        } else {
+            // should be last block
+            assert(NULL == _block->portal_next);
         }
         ivec++;
     } while (total_len);
