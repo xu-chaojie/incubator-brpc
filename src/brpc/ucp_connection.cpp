@@ -114,7 +114,7 @@ void UcpAmMsg::Release(UcpAmMsg *o)
     o->flags = 0;
     o->buf.clear();
     if (o->iov.capacity() > FLAGS_brpc_ucp_iov_reserve) {
-        o->iov.resize(0);
+        o->iov = butil::iobuf_ucp_iov_t();
     }
     uma_zfree(am_msg_zone, o);
 }
@@ -152,9 +152,8 @@ void UcpAmSendInfo::Release(UcpAmSendInfo *o)
     o->req = nullptr;
     o->nvec = 0;
     o->buf.clear();
-    if (o->iov.size() > FLAGS_brpc_ucp_iov_reserve) {
-        o->iov.resize(FLAGS_brpc_ucp_iov_reserve);
-        o->iov.shrink_to_fit();
+    if (o->iov.capacity() > FLAGS_brpc_ucp_iov_reserve) {
+	o->iov = butil::iobuf_ucp_iov_t();
     }
 
     uma_zfree(am_send_info_zone, o);
