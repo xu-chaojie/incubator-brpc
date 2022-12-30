@@ -1973,23 +1973,23 @@ again:
         left = max_count - space;
         if (forced_block_size)
             block_size = forced_block_size;
-        else if (left < 64 * 1024)
+        else if (left < SIZE_64K)
             block_size = DEFAULT_BLOCK_SIZE;
-        else if (left < 1024 * 1024)
-            block_size = 64 * 1024;
+        else if (left < SIZE_1M)
+            block_size = SIZE_64K;
         else
-            block_size = 1024 * 1024;
+            block_size = SIZE_1M;
 
         if (vec.size() < (size_t)nvec + 1)
             vec.resize(nvec+1);
         if (p == NULL) {
             p = iobuf::create_block(block_size);
             if (BAIDU_UNLIKELY(!p)) {
-                if (block_size == 1024 * 1024) {
-                    forced_block_size = 64 * 1024;
+                if (block_size == SIZE_1M) {
+                    forced_block_size = SIZE_64K;
                     goto again;
                 }
-                if (block_size == 64 * 1024) {
+                if (block_size == SIZE_64K) {
                     forced_block_size = DEFAULT_BLOCK_SIZE;
                     goto again;
                 }
