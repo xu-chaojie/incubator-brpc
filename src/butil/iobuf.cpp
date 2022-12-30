@@ -1951,7 +1951,7 @@ ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, iobuf_ucp_iov_t 
 
     auto &vec = *_vec;
     int &nvec = *_nvec;
-    size_t left = 0, block_size = 0, space = 0;
+    size_t left = 0, block_size = 0, space = 0, forced_block_size = 0;
     Block* prev_p = NULL;
     Block* p = _block;
     int size_hint;
@@ -1966,8 +1966,11 @@ ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, iobuf_ucp_iov_t 
     vec.reserve(size_hint);
     nvec = 0;
     do {
+again:
         left = max_count - space;
-    	if (left < 64 * 1024)
+        if (forced_block_size)
+            block_size = forced_block_size;
+        else if (left < 64 * 1024)
             block_size = DEFAULT_BLOCK_SIZE;
         else if (left < 1024 * 1024)
             block_size = 64 * 1024;
@@ -1979,6 +1982,14 @@ ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, iobuf_ucp_iov_t 
         if (p == NULL) {
             p = iobuf::create_block(block_size);
             if (BAIDU_UNLIKELY(!p)) {
+                if (block_size == 1024 * 1024) {
+                    forced_block_size = 64 * 1024;
+                    goto again;
+                }
+                if (block_size == 64 * 1024) {
+                    forced_block_size = DEFAULT_BLOCK_SIZE;
+                    goto again;
+                }
                 errno = ENOMEM;
                 return -1;
             }
