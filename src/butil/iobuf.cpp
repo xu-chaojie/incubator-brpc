@@ -277,7 +277,10 @@ inline void* cp(void *__restrict dest, const void *__restrict src, size_t n) {
 
 void *default_blockmem_allocate(size_t align, size_t size)
 {
-    return ::aligned_alloc(align, size);
+    void *mem;
+    if (posix_memalign(&mem, align, size) == 0)
+        return mem;
+    return NULL;
 }
 
 void default_blockmem_deallocate(void *mem, size_t size)
