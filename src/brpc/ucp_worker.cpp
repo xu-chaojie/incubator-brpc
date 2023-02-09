@@ -288,6 +288,9 @@ void UcpWorker::RemoveCallback(int id)
 
 void UcpWorker::AddConnection(UcpConnection *conn)
 {
+    // We use path-compressed-trie to lookup connection. The trie
+    // stores ucx ep handle which essentially is a pointer.
+    static_assert(sizeof(ucp_ep_h) == sizeof(uintptr_t));
     if (!butil::pctrie_lookup(&conn_map_, (uintptr_t)conn->ep_)) {
         butil::pctrie_insert(&conn_map_, (uintptr_t *)&conn->ep_,
             alloc_trie_node);
