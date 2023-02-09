@@ -223,12 +223,14 @@ void SerializePublicPbrpcRequest(butil::IOBuf* buf, Controller* cntl,
 }
        
 void PackPublicPbrpcRequest(butil::IOBuf* buf,
+                            size_t *attachment_off,
                             SocketMessage**,
                             uint64_t correlation_id,
                             const google::protobuf::MethodDescriptor* method,
                             Controller* controller,
                             const butil::IOBuf& request,
                             const Authenticator* /*not supported*/) {
+    *attachment_off = 0;
     PublicPbrpcRequest pbreq;
     RequestHead* head = pbreq.mutable_requesthead();
     RequestBody* body = pbreq.add_requestbody();

@@ -130,7 +130,7 @@ inline H2Bvars* get_h2_bvars() {
 #endif
 
 class H2UnsentRequest : public SocketMessage, public StreamUserData {
-friend void PackH2Request(butil::IOBuf*, SocketMessage**,
+friend void PackH2Request(butil::IOBuf*, size_t *, SocketMessage**,
                           uint64_t, const google::protobuf::MethodDescriptor*,
                           Controller*, const butil::IOBuf&, const Authenticator*);
 public:
@@ -282,6 +282,7 @@ StreamCreator* get_h2_global_stream_creator();
 ParseResult ParseH2Message(butil::IOBuf *source, Socket *socket,
                              bool read_eof, const void *arg);
 void PackH2Request(butil::IOBuf* buf,
+                   size_t *attachment_off,
                    SocketMessage** user_message_out,
                    uint64_t correlation_id,
                    const google::protobuf::MethodDescriptor* method,

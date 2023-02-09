@@ -33,6 +33,7 @@ void SerializeUbrpcMcpack2Request(butil::IOBuf* buf, Controller* cntl,
                                   const google::protobuf::Message* request);
 
 void PackUbrpcRequest(butil::IOBuf* buf,
+                      size_t *attachment_off,
                       SocketMessage**,
                       uint64_t correlation_id,
                       const google::protobuf::MethodDescriptor* method,

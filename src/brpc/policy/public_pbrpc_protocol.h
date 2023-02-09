@@ -32,6 +32,7 @@ void SerializePublicPbrpcRequest(butil::IOBuf* buf, Controller* cntl,
 
 // Pack `request' to `method' into `buf'.
 void PackPublicPbrpcRequest(butil::IOBuf* buf,
+                            size_t *attachment_off,
                             SocketMessage**,
                             uint64_t correlation_id,
                             const google::protobuf::MethodDescriptor* method,

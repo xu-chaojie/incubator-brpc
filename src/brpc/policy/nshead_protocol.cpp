@@ -393,12 +393,14 @@ void SerializeNsheadRequest(butil::IOBuf* request_buf, Controller* cntl,
 
 void PackNsheadRequest(
     butil::IOBuf* packet_buf,
+    size_t *attachment_off,
     SocketMessage**,
     uint64_t correlation_id,
     const google::protobuf::MethodDescriptor*,
     Controller* cntl,
     const butil::IOBuf& request,
     const Authenticator*) {
+    *attachment_off = 0;
     ControllerPrivateAccessor accessor(cntl);
     if (cntl->connection_type() == CONNECTION_TYPE_SINGLE) {
         return cntl->SetFailed(

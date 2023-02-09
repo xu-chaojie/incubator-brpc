@@ -616,12 +616,14 @@ void SerializeHttpRequest(butil::IOBuf* /*not used*/,
 }
 
 void PackHttpRequest(butil::IOBuf* buf,
+                     size_t *attachment_off,
                      SocketMessage**,
                      uint64_t correlation_id,
                      const google::protobuf::MethodDescriptor*,
                      Controller* cntl,
                      const butil::IOBuf& /*unused*/,
                      const Authenticator* auth) {
+    *attachment_off = 0;
     if (cntl->connection_type() == CONNECTION_TYPE_SINGLE) {
         return cntl->SetFailed(EREQUEST, "http can't work with CONNECTION_TYPE_SINGLE");
     }
