@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.13)
 project(brpc C CXX)
 
+#set default build type to Release                                              
+if (NOT CMAKE_BUILD_TYPE)                                                       
+        set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)                     
+endif() 
+
 # Enable MACOSX_RPATH. Run "cmake --help-policy CMP0042" for policy details.
 if(POLICY CMP0042)
     cmake_policy(SET CMP0042 NEW)
