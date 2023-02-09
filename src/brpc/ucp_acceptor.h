@@ -30,8 +30,7 @@ namespace brpc {
 struct UcpConnectStatistics {
 };
 
-// Accept connections from a specific port and then
-// process messages from which it reads
+// Accept UCP connections from a specific port
 class UcpAcceptor : public InputMessenger {
 public:
     typedef butil::FlatMap<SocketId, UcpConnectStatistics> SocketMap;
