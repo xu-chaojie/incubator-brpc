@@ -254,7 +254,7 @@ void UcpConnection::SetSocketId(SocketId id)
 
     socket_id_ = id;
     socket_id_set_ = true;
-    if (ucp_code_.load()) {
+    if (ucp_code_.load(butil::memory_order_relaxed)) {
         worker_->SetDataReady(this);
     } else if (state_ != STATE_CLOSED) {
         worker_->StartRecv(this);
@@ -291,7 +291,7 @@ ssize_t UcpConnection::Read(butil::IOBuf *out, size_t size_hint)
  
     if (state_ == STATE_HELLO || state_ == STATE_WAIT_HELLO) {
         // Delay receiving data, if IO error occurred, return EOF
-        if (ucp_code_.load())
+        if (ucp_code_.load(butil::memory_order_relaxed))
             return 0;
         // Try again later
         errno = EAGAIN;
@@ -309,13 +309,10 @@ ssize_t UcpConnection::Read(butil::IOBuf *out, size_t size_hint)
     rc = in_buf_.cutn(out, size_hint); 
 
     if (rc == 0) {
-        if (ucp_code_.load()) // IO error happened, return EOF
+        if (ucp_code_.load(butil::memory_order_relaxed)) // IO error happened, return EOF
             return 0;
-    }
-
-    if (rc == 0) {
         rc = -1;
-        errno = EAGAIN;
+        errno = EAGAIN; // try later
     }
  
     return rc;
@@ -352,14 +349,14 @@ ssize_t UcpConnection::Write(butil::IOBuf *data_list[],
         return -1;
     }
 
-    if (ucp_code_.load()) {
+    if (ucp_code_.load(butil::memory_order_relaxed)) {
         errno = ECONNRESET;
         return -1;
     }
 
     ssize_t len = worker_->StartSend(UCP_CMD_BRPC, this, data_list,
         attachment_off_list, ndata);
-    if (ucp_code_.load()) {
+    if (ucp_code_.load(butil::memory_order_relaxed)) {
         errno = ECONNRESET;
         return -1;
     }
@@ -410,7 +407,8 @@ int UcpConnection::WaitOpen(const timespec *abstime)
 
     std::unique_lock<bthread::Mutex> pg(ping_mutex_);
     while (rc == 0 && (state_ == STATE_HELLO || state_ == STATE_WAIT_HELLO) &&
-           ucp_code_.load() == 0 && ucp_recv_code_.load() == 0) {
+           ucp_code_.load(butil::memory_order_relaxed) == 0 &&
+           ucp_recv_code_.load(butil::memory_order_relaxed) == 0) {
            rc = ping_cond_.wait_until(pg, *abstime);
     }
     return rc;
@@ -439,7 +437,7 @@ int UcpConnection::DoPing(const timespec* abstime)
         return -1;
     }
 
-    if (ucp_code_.load()) {
+    if (ucp_code_.load(butil::memory_order_relaxed)) {
         errno = ECONNRESET;
         return -1;
     }
@@ -460,13 +458,15 @@ int UcpConnection::DoPing(const timespec* abstime)
     rc = 0;
     std::unique_lock<bthread::Mutex> pg(ping_mutex_);
     while (rc == 0 && old == ping_seq_ && state_ != STATE_CLOSED &&
-           ucp_code_.load() == 0 && ucp_recv_code_.load() == 0) {
+           ucp_code_.load(butil::memory_order_relaxed) == 0 &&
+           ucp_recv_code_.load(butil::memory_order_relaxed) == 0) {
         rc = ping_cond_.wait_until(pg, *abstime);
     }
     if (rc == 0) {
         if (state_ == STATE_CLOSED)
             rc = ENOTCONN;
-        else if (ucp_code_.load() || ucp_recv_code_.load())
+        else if (ucp_code_.load(butil::memory_order_relaxed) ||
+                 ucp_recv_code_.load(butil::memory_order_relaxed))
             rc = ECONNRESET;
     }
     errno = rc;
