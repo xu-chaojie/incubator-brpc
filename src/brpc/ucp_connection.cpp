@@ -27,12 +27,15 @@
 #include <string.h>
 #include <sys/socket.h>
 
-// 1. 为了在IO路径上减少时延，使用resource来分配UcpAmMsg和UcpAmSendInfo
+// 1. 为了在IO路径上减少时延，使用mempool来分配UcpAmMsg和UcpAmSendInfo
 // 2. UcpConnection中的mutex只在关闭时使用wrlock, 其他部分使用rdlock
 
 namespace brpc {
 
+// Ping超时, 秒为单位
 DEFINE_int32(brpc_ucp_ping_timeout, 10, "Number of seconds");
+
+// std vector允许保留的内存大小
 DEFINE_uint32(brpc_ucp_iov_reserve, 8, "Number of iov elements are cached");
 
 bthread_attr_t ucp_consumer_thread_attr = BTHREAD_ATTR_NORMAL;
@@ -40,7 +43,8 @@ bthread_attr_t ucp_consumer_thread_attr = BTHREAD_ATTR_NORMAL;
 static int get_am_count(void *arg);
 static int get_send_info_count(void *arg);
 
-// to avoid be destructed, dynamically allocated it
+// C++全局变量析构不保证次序，下面的bvar需要活的比其他任何ucp connection对象
+// 更久, 所以使用动态申请内存并且不再释放
 static bvar::Adder<int> *g_ucp_conn;
 static bvar::PassiveStatus<int> g_am_count("am_cnt", get_am_count, NULL);
 static bvar::PassiveStatus<int> g_send_info_count("send_info_cnt",
