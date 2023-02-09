@@ -71,6 +71,7 @@ UcpCm::UcpCm()
     , status_(UNINITIALIZED)
     , fd_tid_(INVALID_BTHREAD)
     , epfd_(-1)
+    , gen_(0)
 {
     pipe_fds_[0] = pipe_fds_[1] = -1;
 }
@@ -184,7 +185,6 @@ int UcpCm::Connect(const butil::EndPoint &peer)
 int UcpCm::DoConnect(const ConnectionOptions& opts)
 {
     UcpWorker *worker = pool_->GetWorker();
-    struct stat st;
     int fds[2];
     int saved_errno;
     int err = 0;
@@ -196,15 +196,6 @@ int UcpCm::DoConnect(const ConnectionOptions& opts)
         return -1;
     }
 
-    if (fstat(fds[1], &st)) {
-        saved_errno = errno;
-        PLOG(ERROR) << "fstat() failed";
-        ::close(fds[0]);
-        ::close(fds[1]);
-        errno = saved_errno;
-        return -1;
-    }
- 
     // We allocate object by operator new which is aligned to cache line,
     // don't use make_shared
     UcpConnection *conn_ptr = new UcpConnection(this, worker);
@@ -216,13 +207,13 @@ int UcpCm::DoConnect(const ConnectionOptions& opts)
 
     mutex_.lock();
     item0.fd1 = fds[1];
-    item0.ino = st.st_ino;
+    item0.cookie_ = gen_;
     fd_conns_0_[fds[0]] = item0;
 
     item1.conn = conn;
-    item1.mode = st.st_mode;
-    item1.ino  = st.st_ino;
+    item1.cookie_  = gen_;
     ReplaceFd1(fds[1], item1);
+    gen_++;
     mutex_.unlock();
 
     if (opts.req)
@@ -336,8 +327,8 @@ void UcpCm::HandleFdInput(int fd0)
         return;
     }
 
-    if (item0.ino != it1->second.ino) {
-        // the entry is replaced by a new connection, remove fd0 now
+    if (item0.cookie_ != it1->second.cookie_) {
+        // the entry is replaced by a new connection, remove fd0 only
         fd_conns_0_.erase(fd0);
         lg.unlock();
         ::close(fd0);
@@ -368,10 +359,6 @@ void UcpCm::HandleFdInput(int fd0)
 UcpConnectionRef UcpCm::GetConnection(int fd1)
 {
     UcpConnectionRef conn;
-    struct stat b;
-
-    if (fstat(fd1, &b))
-        return conn;
 
     BAIDU_SCOPED_LOCK(mutex_);
     auto it = fd_conns_1_.find(fd1);
@@ -379,12 +366,7 @@ UcpConnectionRef UcpCm::GetConnection(int fd1)
         return conn;
     }
 
-    if (b.st_mode == it->second.mode &&
-        b.st_ino == it->second.ino) {
-        return it->second.conn;
-    }
-
-    return conn;
+    return it->second.conn;
 }
 
 void UcpCm::ReplaceFd1(int fd1, const Fd1Item &item)
