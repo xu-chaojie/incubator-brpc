@@ -279,8 +279,9 @@ int UcpAcceptor::StartAccept(const butil::EndPoint &endpoint,
 
     stat = ucp_listener_create(worker, &params, &listener);
     if (stat != UCS_OK) {
-        LOG(ERROR) << "ucx failed to listen ("
-                   << ucs_status_string(stat) << ")";
+        LOG(ERROR) << "ucx failed to listen on "
+                   << butil::ip2str(endpoint.ip).c_str() << ":" << endpoint.port
+                   << " (" << ucs_status_string(stat) << ")";
         goto err_worker;
     }
 
