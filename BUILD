@@ -81,20 +81,6 @@ LINKOPTS = [
     "//conditions:default": [],
 })
 
-UCX_COPTS = ["-Iexternal/ucx"]
-
-UCX_LINKOPTS = [
-    "-L/usr/local/ucx/lib",
-    "-Wl,-rpath=/usr/local/ucx/lib",
-    "-lucp",
-    "-luct",
-    "-lucm",
-    "-lucs",
-    "-lucs_signal",
-]
-
-UCX_DEPS = ["//external:ucx_headers"]
-
 genrule(
     name = "config_h",
     outs = [
@@ -117,6 +103,16 @@ genrule(
 EOF
     """
 )
+
+UCX_LINKOPTS = [
+    "-lucp",
+    "-luct",
+    "-lucm",
+    "-lucs",
+    "-lucs_signal",
+    "-L/usr/local/ucx/lib",
+    "-Wl,-rpath=/usr/local/ucx/lib",
+]
 
 BUTIL_SRCS = [
     "src/butil/third_party/dmg_fp/g_fmt.cc",
@@ -335,11 +331,12 @@ cc_library(
     deps = [
         "@com_google_protobuf//:protobuf",
         "@com_github_gflags_gflags//:gflags",
+        "@ucx//:ucx",
     ] + select({
         ":with_glog": ["@com_github_google_glog//:glog"],
         ":darwin": [":macos_lib"],
         "//conditions:default": [],
-    }) + UCX_DEPS,
+    }),
     includes = [
         "src/",
     ],
@@ -351,8 +348,8 @@ cc_library(
         "//conditions:default": [],
     }) + [
         "-DIOBUF_NO_UMA_BVAR",
-    ] + UCX_COPTS,
-    linkopts = LINKOPTS,
+    ],
+    linkopts = LINKOPTS + UCX_LINKOPTS,
     visibility = ["//visibility:public"],
 )
 
@@ -479,7 +476,6 @@ brpc_proto_library(
     visibility = ["//visibility:public"],
 )
 
-
 cc_library(
     name = "brpc",
     srcs = glob([
@@ -511,6 +507,7 @@ cc_library(
         ":mcpack2pb",
         ":cc_brpc_internal_proto",
         "@com_github_google_leveldb//:leveldb",
+        "@ucx//:ucx",
     ],
     copts = COPTS,
     linkopts = LINKOPTS + UCX_LINKOPTS,
@@ -531,15 +528,3 @@ cc_binary(
     visibility = ["//visibility:public"],
 )
 
-filegroup(
-    name = "all",
-    srcs = [
-        ":butil",
-        ":bvar",
-        ":bthread",
-        ":brpc",
-        ":mcpack2pb",
-        ":cc_brpc_idl_options_proto",
-        ":cc_brpc_internal_proto",
-    ]
-)

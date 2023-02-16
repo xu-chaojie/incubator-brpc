@@ -38,3 +38,9 @@ def brpc_workspace():
       strip_prefix = "googletest-0fe96607d85cf3a25ac40da369db62bbee2939a5",
       url = "https://github.com/google/googletest/archive/0fe96607d85cf3a25ac40da369db62bbee2939a5.tar.gz",
   )
+
+  native.new_local_repository(
+      name = "ucx",
+      path = "/usr/local/ucx",
+      build_file = "//:bazel/ucx.BUILD",
+  )
