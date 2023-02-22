@@ -106,6 +106,13 @@ public:
 
         // Echo request and its attachment
         response->set_message(request->message());
+        auto &a = cntl->response_attachment();
+        if (!a.empty()) {
+            const auto &b = a.backing_block(0);
+            if (!pfs_is_spdk_mem((void *)b.data(), b.size())) {
+                fprintf(stderr, "not spdk memory\n");
+            }
+        }
         if (FLAGS_echo_attachment) {
             cntl->response_attachment().append(cntl->request_attachment());
         }
