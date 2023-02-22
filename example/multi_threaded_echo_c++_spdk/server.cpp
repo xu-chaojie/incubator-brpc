@@ -165,7 +165,7 @@ int dpdk_for_uct_alloc(void **address, size_t align,
     snprintf(buf, sizeof(buf),
         "%s failed to allocate, align: %ld, length:%ld\n",
         __func__, align, length);
-    LOG(INFO) << buf;
+    LOG(ERROR) << buf;
     return -ENOMEM;
 }
 
