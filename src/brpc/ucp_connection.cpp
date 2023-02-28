@@ -157,7 +157,7 @@ void UcpAmSendInfo::Release(UcpAmSendInfo *o)
     o->nvec = 0;
     o->buf.clear();
     if (o->iov.capacity() > FLAGS_brpc_ucp_iov_reserve) {
-	o->iov = butil::iobuf_ucp_iov_t();
+        o->iov = butil::iobuf_ucp_iov_t();
     }
 
     uma_zfree(am_send_info_zone, o);
