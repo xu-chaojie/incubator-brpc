@@ -20,6 +20,7 @@
 #include "bthread/unstable.h"
 #include "butil/logging.h"
 #include "butil/pctrie.h"
+#include "bvar/bvar.h"
 
 #include <gflags/gflags.h>
 #include <endian.h>
@@ -55,6 +56,8 @@ DEFINE_int32(brpc_ucp_worker_poll_yield, 0, "Thread yields after accumulated so 
 DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
 DEFINE_int32(brpc_ucp_worker_progress, 350, "worker progress count");
 
+static bvar::LatencyRecorder &g_conn_lock_latency = *(new bvar::LatencyRecorder("ucp conn lock latency"));
+
 /*
   接收端读写NVME也许需要4字节对齐的地址，这里通过在接收端总是提供4字节
   对齐的接收缓冲区，并在发送端对attachment进行4字节对齐来达到。
@@ -64,6 +67,36 @@ DEFINE_int32(brpc_ucp_worker_progress, 350, "worker progress count");
 
 uint64_t g_supported_features;
 uint64_t g_required_features;
+
+struct Latency {
+    Latency() {
+        start_ = {0, 0};
+        end_ = {0, 0};
+    }
+
+    void start() {
+        gettimeofday(&start_, NULL);
+    }
+
+    void latch() {
+        gettimeofday(&end_, NULL);
+    }
+
+    long get() const {
+        struct timeval result;
+        timersub(&end_, &start_, &result);
+        return result.tv_sec * 1000000L + result.tv_usec;
+    }
+
+    long latch_and_get() {
+        latch();
+        return get();
+    }
+
+private:
+    struct timeval start_;
+    struct timeval end_;
+};
 
 struct Hello {
     uint64_t required_features;
@@ -528,8 +561,8 @@ void UcpWorker::DoRunWorker()
             count = 0;
         }
 again:
-        mutex_.lock();
         step = FLAGS_brpc_ucp_worker_progress;
+        mutex_.lock();
         while (ucp_worker_progress(ucp_worker_)) {
             if (step <= 0)
                 break;
@@ -985,7 +1018,12 @@ void UcpWorker::MergeInputMessage(UcpConnection *conn)
 
 int UcpWorker::Accept(UcpConnection *conn, ucp_conn_request_h req)
 {
+    Latency lat;
+
+    lat.start();
     BAIDU_SCOPED_LOCK(mutex_);
+    g_conn_lock_latency << lat.latch_and_get();
+
     int ret = CreateUcpEp(conn, req);
     if (ret == 0) {
         conn->state_ = UcpConnection::STATE_WAIT_HELLO;
@@ -997,7 +1035,12 @@ int UcpWorker::Accept(UcpConnection *conn, ucp_conn_request_h req)
 
 int UcpWorker::Connect(UcpConnection *conn, const butil::EndPoint &peer)
 {
+    Latency lat;
+  
+    lat.start();
     BAIDU_SCOPED_LOCK(mutex_);
+    g_conn_lock_latency << lat.latch_and_get();
+
     int ret = create_ucp_ep(ucp_worker_, peer, ErrorCallback, this, &conn->ep_);
     if (ret == 0) {
         conn->state_ = UcpConnection::STATE_HELLO;
