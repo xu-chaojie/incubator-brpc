@@ -88,9 +88,12 @@ struct Latency {
         return result.tv_sec * 1000000L + result.tv_usec;
     }
 
-    long latch_and_get() {
+    long latch_and_record() {
+        long temp = 0;
+
         latch();
-        return get();
+        g_conn_lock_latency << (temp = get());
+        return temp;
     }
 
 private:
@@ -1022,7 +1025,7 @@ int UcpWorker::Accept(UcpConnection *conn, ucp_conn_request_h req)
 
     lat.start();
     BAIDU_SCOPED_LOCK(mutex_);
-    g_conn_lock_latency << lat.latch_and_get();
+    lat.latch_and_record();
 
     int ret = CreateUcpEp(conn, req);
     if (ret == 0) {
@@ -1039,7 +1042,7 @@ int UcpWorker::Connect(UcpConnection *conn, const butil::EndPoint &peer)
   
     lat.start();
     BAIDU_SCOPED_LOCK(mutex_);
-    g_conn_lock_latency << lat.latch_and_get();
+    g_conn_lock_latency << lat.latch_and_record();
 
     int ret = create_ucp_ep(ucp_worker_, peer, ErrorCallback, this, &conn->ep_);
     if (ret == 0) {
