@@ -52,6 +52,7 @@ enum {
 #define UCP_CMD_MAX UCP_CMD_HELLO_REPLY
 };
 
+// Our protocol header
 struct MsgHeader {
     uint16_t ver;
     uint16_t cmd;
@@ -91,6 +92,7 @@ enum {
     AMF_FINISH,
 };
 
+// A struct to hold ucp active-message
 struct UcpAmMsg {
     TAILQ_ENTRY(UcpAmMsg) link;
     TAILQ_ENTRY(UcpAmMsg) comp_link;
@@ -123,6 +125,7 @@ private:
     void operator delete( void * ) {}
 };
 
+// A struct to hold sending message
 struct UcpAmSendInfo {
     TAILQ_ENTRY(UcpAmSendInfo) link;
     UcpConnectionRef conn;
@@ -144,6 +147,8 @@ private:
     void operator delete( void * ) {}
 };
 
+// A class to represent ucp connection
+// To reduce cpu cache false sharing, some fields are aligned with cache line.
 class UcpConnection {
 public:
     UcpConnection(UcpCm* cm, UcpWorker *w);

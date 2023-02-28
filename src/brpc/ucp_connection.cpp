@@ -261,9 +261,11 @@ void UcpConnection::SetSocketId(SocketId id)
     }
 }
 
-// called by UcpWorker to notify brpc Socket when data is ready
+// Take action when data is ready.
+// Called by UcpWorker to notify brpc Socket when data is ready
 void UcpConnection::DataReady()
 {
+    // Reset marker
     data_ready_flag_ = false;
     // If state is STATE_CLOSED, we don't need to notify upper layer,
     // because only upper layer sets state to STATE_CLOSED with Close()
@@ -332,7 +334,7 @@ ssize_t UcpConnection::Write(butil::IOBuf *data_list[],
     bthread::v2::rlock_guard g(mutex_);
 
     if (state_ == STATE_HELLO || state_ == STATE_WAIT_HELLO) {
-        // Delay sending data until hello is replied
+        // Delay sending data until handshake is done
         size_t total = 0;
         BAIDU_SCOPED_LOCK(send_mutex_);
         for (int i = 0; i < ndata; ++i) {
