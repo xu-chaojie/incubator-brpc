@@ -68,15 +68,20 @@ static bvar::LatencyRecorder &g_conn_lock_latency = *(new bvar::LatencyRecorder(
 uint64_t g_supported_features;
 uint64_t g_required_features;
 
-struct AutoInc {
-    std::atomic<int> &count;
-
+class AutoInc {
+public:
     AutoInc(std::atomic<int>& a) : count(a) {
         count.fetch_add(1,  std::memory_order_relaxed);
     }
     ~AutoInc() {
         count.fetch_sub(1,  std::memory_order_relaxed);
     }
+
+private:
+    AutoInc(const AutoInc &) = delete;
+    void operator = (const AutoInc &) = delete;
+
+    std::atomic<int> &count;
 };
 
 struct Latency {
