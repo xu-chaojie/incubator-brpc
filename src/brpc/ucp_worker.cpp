@@ -68,6 +68,17 @@ static bvar::LatencyRecorder &g_conn_lock_latency = *(new bvar::LatencyRecorder(
 uint64_t g_supported_features;
 uint64_t g_required_features;
 
+struct AutoInc {
+    std::atomic<int> &count;
+
+    AutoInc(std::atomic<int>& a) : count(a) {
+        count.fetch_add(1,  std::memory_order_relaxed);
+    }
+    ~AutoInc() {
+        count.fetch_sub(1,  std::memory_order_relaxed);
+    }
+};
+
 struct Latency {
     Latency() {
         start_ = {0, 0};
@@ -88,11 +99,11 @@ struct Latency {
         return result.tv_sec * 1000000L + result.tv_usec;
     }
 
-    long latch_and_record() {
+    long latch_and_record(bvar::LatencyRecorder *r) {
         long temp = 0;
 
         latch();
-        g_conn_lock_latency << (temp = get());
+        *r << (temp = get());
         return temp;
     }
 
@@ -268,6 +279,7 @@ public:
 
 UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
     : status_(UNINITIALIZED)
+    , conn_reqs_(0)
     , id_(id)
     , worker_tid_(INVALID_BTHREAD)
     , event_fd_(-1)
@@ -567,6 +579,8 @@ again:
         step = FLAGS_brpc_ucp_worker_progress;
         mutex_.lock();
         while (ucp_worker_progress(ucp_worker_)) {
+            if (conn_reqs_.load(std::memory_order_relaxed))
+                break;
             if (step <= 0)
                 break;
             step--;
@@ -1021,11 +1035,12 @@ void UcpWorker::MergeInputMessage(UcpConnection *conn)
 
 int UcpWorker::Accept(UcpConnection *conn, ucp_conn_request_h req)
 {
+    AutoInc ai(conn_reqs_);
     Latency lat;
 
     lat.start();
     BAIDU_SCOPED_LOCK(mutex_);
-    lat.latch_and_record();
+    lat.latch_and_record(&g_conn_lock_latency);
 
     int ret = CreateUcpEp(conn, req);
     if (ret == 0) {
@@ -1038,11 +1053,12 @@ int UcpWorker::Accept(UcpConnection *conn, ucp_conn_request_h req)
 
 int UcpWorker::Connect(UcpConnection *conn, const butil::EndPoint &peer)
 {
+    AutoInc ai(conn_reqs_);
     Latency lat;
   
     lat.start();
     BAIDU_SCOPED_LOCK(mutex_);
-    g_conn_lock_latency << lat.latch_and_record();
+    lat.latch_and_record(&g_conn_lock_latency);
 
     int ret = create_ucp_ep(ucp_worker_, peer, ErrorCallback, this, &conn->ep_);
     if (ret == 0) {
