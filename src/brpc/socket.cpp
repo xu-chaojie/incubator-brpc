@@ -1341,7 +1341,7 @@ int Socket::Connect(const timespec* abstime,
             if (conn) {
                 int rc = conn->Ping(abstime);
                 if (rc)
-                    return rc;
+                    return -1;
                 goto out;
             } else {
                 errno = ENOTCONN;

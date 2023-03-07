@@ -429,8 +429,10 @@ int UcpConnection::DoPing(const timespec* abstime)
 
     if (state_ == STATE_HELLO || state_ == STATE_WAIT_HELLO) {
         int err = WaitOpen(abstime);
-        if (err != 0)
-            return err;
+        if (err != 0) {
+            errno = err;
+            return -1;
+        }
     }
 
     bthread::v2::rlock_guard lg(mutex_);
