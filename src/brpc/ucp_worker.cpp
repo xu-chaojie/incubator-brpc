@@ -36,11 +36,11 @@
 #define AM_ID  0
 
 /*
- 忙等待能降低时延进而提高吞吐。但是当在连接上没有流量时，还是会使用整个CPU
- 核心。
- 为了避免资源浪费，使用一种自适应polling算法用来处理空闲的网络连接。
+ 忙等待能降低时延进而提高吞吐。但是当在连接上没有流量时，还是会使用整个CPU。
+ 为了避免资源浪费，可以设置另外一种模式:
+ 使用一种自适应polling算法用来处理空闲的网络连接。
  每当有数据发送出去时，会让worker等待一段时间做busy polling，这段时间是可以
- 配置的，当前设置为60(us)，这是希望在这段时间内会有数据返回回来，其中在
+ 配置的，当前设置为60(us)，这是希望在这段时间内会有数据返回来，其中在
  busy polling期间如果过了固定数量的循环次数，则使用pthread_yield()来让出CPU，
  这个循环次数是可以配置的，当前缺省设置为0, 最后如果过了这段时间没有收到
  数据，则线程停止busy polling，进入内核等待。
@@ -48,14 +48,14 @@
 
 namespace brpc {
 
+/* 系统缺省模式是忙等待 */
 DEFINE_bool(brpc_ucp_worker_busy_poll, true, "Enable/disable busy poll");
 DEFINE_int32(brpc_ucp_worker_poll_time, 60, "Polling duration in microseconds)");
 DEFINE_int32(brpc_ucp_worker_poll_yield, 0, "Thread yields after accumulated so many polling loops");
 DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
-DEFINE_bool(brpc_ucp_always_flush, false, "flush when disconnecting");
 
 /*
-  接收端读写NVME也许需要4字节对齐的地址，这通过在接收端总是提供4字节
+  接收端读写NVME也许需要4字节对齐的地址，这里通过在接收端总是提供4字节
   对齐的接收缓冲区，并在发送端对attachment进行4字节对齐来达到。
 */
 #define NVME_DWORD_ALIGN  4
