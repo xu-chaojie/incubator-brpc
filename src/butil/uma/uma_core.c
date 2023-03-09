@@ -84,7 +84,7 @@ static pthread_t uma_timeout_td;
 static pthread_t uma_reclaim_td;
 static uint64_t g_clock;
 
-#define UMA_CACHE_EXPIRE 60
+#define UMA_CACHE_EXPIRE 180
 
 static int is_cache_expire(uma_cache_t cache)
 {
