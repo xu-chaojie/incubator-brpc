@@ -82,7 +82,6 @@ typedef int bool;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 static pthread_t uma_timeout_td;
 static pthread_t uma_reclaim_td;
-static pthread_t uma_reclaim_cache_td;
 static uint64_t g_clock;
 
 #define UMA_CACHE_EXPIRE 60
@@ -256,7 +255,6 @@ static uma_zone_t uma_zcache_create_impl(const char *name, int size,
     uma_import zimport, uma_release zrelease, void *arg, int flags);
 static void uma_startup_impl(void);
 static void *uma_reclaim_worker(void *arg);
-static void *uma_reclaim_cache_worker(void *arg);
 
 void uma_print_zone(uma_zone_t);
 void uma_print_stats(void);
@@ -1680,7 +1678,6 @@ uma_startup3(void)
 #endif
 	pthread_create(&uma_timeout_td, NULL, uma_timeout, NULL);
 	pthread_create(&uma_reclaim_td, NULL, uma_reclaim_worker, NULL);
-	pthread_create(&uma_reclaim_cache_td, NULL, uma_reclaim_cache_worker, NULL);
 
 #ifdef UMA_DEBUG
 	printf("UMA startup3 complete.\n");
@@ -2753,23 +2750,6 @@ uma_reclaim_wakeup(void)
 	pthread_mutex_unlock(&uma_drain_mtx);	
 }
 
-static void *
-uma_reclaim_worker(void *arg)
-{
-
-	for (;;) {
-		pthread_mutex_lock(&uma_drain_mtx);
-		while (!uma_reclaim_needed)
-			pthread_cond_wait(&uma_drain_cond, &uma_drain_mtx);
-		uma_reclaim_needed = 0;
-		pthread_mutex_unlock(&uma_drain_mtx);
-		uma_sx_xlock(&uma_drain_lock);
-		uma_reclaim_locked(true);
-		uma_sx_xunlock(&uma_drain_lock);
-	}
-	return 0;
-}
-
 static void
 uma_period_cache_drain_safe(void)
 {
@@ -2783,26 +2763,49 @@ uma_period_cache_drain_safe(void)
 }
 
 static void *
-uma_reclaim_cache_worker(void *arg)
+uma_reclaim_worker(void *arg)
 {
-	int MAX_WAIT = 20;
-	int count = MAX_WAIT;
+	const int MAX_WAIT = 15;
+	int wait_count = MAX_WAIT;
+	struct timespec ts;
+	int rc, timed_out = 0, forced_reclaim = 0;
 
 	for (;;) {
-		sleep(1);
+		pthread_mutex_lock(&uma_drain_mtx);
+		timed_out = 0;
+		while (!uma_reclaim_needed && !timed_out) {
+			clock_gettime(CLOCK_REALTIME, &ts);
+			ts.tv_sec += 1; /* sleep 1 second */
+			rc = pthread_cond_timedwait(&uma_drain_cond,
+				&uma_drain_mtx, &ts);
+			if (rc == ETIMEDOUT) {
+				/* our virtual clock */
+				g_clock += 1;
 
-		/* our virtual clock */
-		g_clock++;
-
-		/* Every MAX_WAIT seconds we will drain per-cpu cache if the cpu cache
-         * is inactive and recycle it.
-		 */
-		if (--count <= 0) {
-			uma_sx_xlock(&uma_drain_lock);
-			uma_period_cache_drain_safe();
-			uma_sx_xunlock(&uma_drain_lock);
-			count = MAX_WAIT + random() % 3;
+				/*
+				 * Every MAX_WAIT seconds we will drain
+				 * per-cpu cache if the cpu cache
+				 * is inactive and recycle it.
+				 */
+				--wait_count;
+				if (wait_count <= 0) {
+					wait_count = MAX_WAIT;
+					timed_out = 1;
+					break;
+				}
+			}
 		}
+		wait_count = MAX_WAIT;
+		forced_reclaim = uma_reclaim_needed;
+		uma_reclaim_needed = 0;
+		pthread_mutex_unlock(&uma_drain_mtx);
+
+		uma_sx_xlock(&uma_drain_lock);
+		if (forced_reclaim)
+			uma_reclaim_locked(true);
+		else if (timed_out)
+			uma_period_cache_drain_safe();
+		uma_sx_xunlock(&uma_drain_lock);
 	}
 	return 0;
 }
