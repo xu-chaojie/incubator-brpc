@@ -456,7 +456,7 @@ void UcpWorker::Stop()
 
 void UcpWorker::Join()
 {
-    std::unique_lock<bthread::Mutex> mu(mutex_);
+    std::unique_lock<decltype(mutex_)> mu(mutex_);
     if (status_ != STOPPING) {
         return;
     }
@@ -468,7 +468,7 @@ void UcpWorker::Join()
     ucp_worker_ = NULL;
 
     {
-        BAIDU_SCOPED_LOCK(mutex_);
+        mu.lock();
         status_ = READY;
     }
 }
