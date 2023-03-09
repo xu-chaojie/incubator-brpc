@@ -53,6 +53,7 @@ DEFINE_bool(brpc_ucp_worker_busy_poll, true, "Enable/disable busy poll");
 DEFINE_int32(brpc_ucp_worker_poll_time, 60, "Polling duration in microseconds)");
 DEFINE_int32(brpc_ucp_worker_poll_yield, 0, "Thread yields after accumulated so many polling loops");
 DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
+DEFINE_int32(brpc_ucp_worker_progress, 350, "worker progress count");
 
 /*
   接收端读写NVME也许需要4字节对齐的地址，这里通过在接收端总是提供4字节
@@ -509,7 +510,7 @@ void UcpWorker::DoRunWorker()
 {
     struct pollfd poll_info;
     struct timeval tv_start{0,0}, tv_end{0,0}, tv_int{0,0}, tv_now{0,0};
-    int count = 0;
+    int count = 0, step = 0;
 
     pthread_setname_np(pthread_self(), "ucp_worker");
     tv_int.tv_sec = 0;
@@ -528,8 +529,12 @@ void UcpWorker::DoRunWorker()
         }
 again:
         mutex_.lock();
-        while (ucp_worker_progress(ucp_worker_))
-            ;
+        step = FLAGS_brpc_ucp_worker_progress;
+        while (ucp_worker_progress(ucp_worker_)) {
+            if (step <= 0)
+                break;
+            step--;
+        }
         DispatchAmMsgQ();
         DispatchRecvCompQ();
         KeepSendRequest();
