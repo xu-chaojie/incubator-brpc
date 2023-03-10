@@ -85,7 +85,7 @@ static pthread_t uma_reclaim_td;
 static uint64_t g_clock;
 static uint64_t g_disable_cpu_cache_recycle = 1;
 
-#define UMA_CACHE_EXPIRE 60
+#define UMA_CACHE_EXPIRE 180
 
 static int is_cache_expire(uma_cache_t cache)
 {
@@ -701,7 +701,10 @@ cache_drain_safe_cpu_impl(uma_zone_t zone, int check_expire)
 
 	b1 = b2 = NULL;
 	cache = &zone->uz_cpu[curcpu];
-	if (check_expire && !is_cache_expire(cache)) {
+	// dirty read, but not a problem
+	if (check_expire && (!is_cache_expire(cache) ||
+            (cache->uc_allocbucket == NULL &&
+             cache->uc_freebucket == NULL))) {
 		return;
 	}
 	ZONE_LOCK(zone);
