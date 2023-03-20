@@ -65,9 +65,9 @@ DEFINE_int32(butil_iobuf_1M_max, 100, "Maximum number of 1M blocks cached");
 
 #ifndef IOBUF_NO_UMA_BVAR
 bvar::PassiveStatus<int> g_iobuf_64k_count("64K iobuf", get_64K_count, NULL);
-bvar::Adder<int> g_iobuf_64k_overflow("64K iobuf cache overflow");
+bvar::Adder<int> *g_iobuf_64k_overflow = NULL;
 bvar::PassiveStatus<int> g_iobuf_1M_count("1M iobuf", get_1M_count, NULL);
-bvar::Adder<int> g_iobuf_1M_overflow("1M iobuf cache overflow");
+bvar::Adder<int> *g_iobuf_1M_overflow = NULL;
 bvar::PassiveStatus<int> g_iobuf_zone_obj_count("iobuf uma count",
     get_uma_iobuf_count, NULL);
 bvar::PassiveStatus<int> g_block_zone_obj_count("block uma count",
@@ -80,6 +80,11 @@ static uma_zone_t block_zone;
 static LFStack iobuf_64K_cache;
 static LFStack iobuf_1M_cache;
 static void do_start_uma();
+
+BAIDU_GLOBAL_INIT() {
+    g_iobuf_64k_overflow = new bvar::Adder<int> ("64K iobuf cache overflow");
+    g_iobuf_1M_overflow = new bvar::Adder<int>("1M iobuf cache overflow");
+}
 
 static inline void start_uma()
 {
@@ -379,7 +384,7 @@ static void do_blockmem_deallocate(void *mem, size_t size)
         }
 
 #ifndef IOBUF_NO_UMA_BVAR
-        g_iobuf_64k_overflow << 1;
+        *g_iobuf_64k_overflow << 1;
 #endif
     } else if (size == SIZE_1M) {
         static struct timeval tv_1M_last = {0, 0};
@@ -392,7 +397,7 @@ static void do_blockmem_deallocate(void *mem, size_t size)
         }
 
 #ifndef IOBUF_NO_UMA_BVAR
-        g_iobuf_1M_overflow << 1;
+        *g_iobuf_1M_overflow << 1;
 #endif
     } else {
         call_blockmem_deallocate(mem, size);

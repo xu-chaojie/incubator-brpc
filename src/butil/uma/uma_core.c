@@ -82,6 +82,15 @@ typedef int bool;
 static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 static pthread_t uma_timeout_td;
 static pthread_t uma_reclaim_td;
+static uint64_t g_clock;
+static uint64_t g_disable_cpu_cache_recycle = 1;
+
+#define UMA_CACHE_EXPIRE 180
+
+static int is_cache_expire(uma_cache_t cache)
+{
+    return g_clock - cache->uc_clock >= UMA_CACHE_EXPIRE;
+}
 
 /*
  * This is the zone and keg from which all zones are spawned.  The idea is that
@@ -682,7 +691,7 @@ cache_shrink(uma_zone_t zone)
 }
 
 static void
-cache_drain_safe_cpu(uma_zone_t zone)
+cache_drain_safe_cpu_impl(uma_zone_t zone, int check_expire)
 {
 	uma_cache_t cache;
 	uma_bucket_t b1, b2;
@@ -691,9 +700,20 @@ cache_drain_safe_cpu(uma_zone_t zone)
 		return;
 
 	b1 = b2 = NULL;
-	ZONE_LOCK(zone);
 	cache = &zone->uz_cpu[curcpu];
+	// dirty read, but not a problem
+	if (check_expire && (!is_cache_expire(cache) ||
+            (cache->uc_allocbucket == NULL &&
+             cache->uc_freebucket == NULL))) {
+		return;
+	}
+	ZONE_LOCK(zone);
 	CACHE_LOCK(cache);
+	if (check_expire && !is_cache_expire(cache)) {
+		CACHE_UNLOCK(cache);
+		ZONE_UNLOCK(zone);
+		return;
+	}
 	if (cache->uc_allocbucket) {
 		if (cache->uc_allocbucket->ub_cnt != 0)
 			LIST_INSERT_HEAD(&zone->uz_buckets,
@@ -716,6 +736,18 @@ cache_drain_safe_cpu(uma_zone_t zone)
 		bucket_free(zone, b1, NULL);
 	if (b2)
 		bucket_free(zone, b2, NULL);
+}
+
+static void
+cache_drain_safe_cpu(uma_zone_t zone)
+{
+	cache_drain_safe_cpu_impl(zone, false);
+}
+
+static void
+cache_drain_safe_cpu_period(uma_zone_t zone)
+{
+	cache_drain_safe_cpu_impl(zone, true);
 }
 
 /*
@@ -1567,6 +1599,11 @@ uma_startup_impl(void)
 {
 	struct uma_zctor_args args;
 
+	if (getenv("brpc_enable_uma_recycle_cpu_cache")) {
+		g_disable_cpu_cache_recycle = 0;
+		printf("Enabled brpc uma cpu cache recycle\n");
+	}
+
 #ifdef UMA_DEBUG
 	printf("Creating uma keg headers zone and keg.\n");
 #endif
@@ -1824,6 +1861,7 @@ uma_zalloc_arg(uma_zone_t zone, void *udata, int flags)
 	cache = &zone->uz_cpu[cpu];
 	CACHE_LOCK(cache);
 zalloc_start:
+	cache->uc_clock = g_clock;
 	bucket = cache->uc_allocbucket;
 	if (bucket != NULL && bucket->ub_cnt > 0) {
 		bucket->ub_cnt--;
@@ -2721,18 +2759,66 @@ uma_reclaim_wakeup(void)
 	pthread_mutex_unlock(&uma_drain_mtx);	
 }
 
+static void
+uma_period_cache_drain_safe(void)
+{
+	int cpu;
+
+	CPU_FOREACH(cpu) {
+		sched_bind(cpu);
+		zone_foreach(cache_drain_safe_cpu_period);
+	}
+	sched_unbind();
+}
+
 static void *
 uma_reclaim_worker(void *arg)
 {
+	const int MAX_WAIT = 15;
+	int wait_count = MAX_WAIT;
+	struct timespec ts;
+	int rc, timed_out = 0, forced_reclaim = 0;
 
 	for (;;) {
 		pthread_mutex_lock(&uma_drain_mtx);
-		while (!uma_reclaim_needed)
-			pthread_cond_wait(&uma_drain_cond, &uma_drain_mtx);
+		timed_out = 0;
+		while (!uma_reclaim_needed) {
+			if (g_disable_cpu_cache_recycle) {
+				pthread_cond_wait(&uma_drain_cond, &uma_drain_mtx);
+				rc = 0;
+			} else {
+				clock_gettime(CLOCK_REALTIME, &ts);
+				ts.tv_sec += 1; /* sleep 1 second */
+				rc = pthread_cond_timedwait(&uma_drain_cond,
+						&uma_drain_mtx, &ts);
+				if (rc == ETIMEDOUT) {
+					/* our virtual clock */
+					g_clock += 1;
+
+					/*
+					 * Every MAX_WAIT seconds we will drain
+					 * per-cpu cache if the cpu cache
+					 * is inactive and recycle it.
+					 */
+					--wait_count;
+					if (wait_count <= 0) {
+						wait_count = MAX_WAIT;
+						timed_out = 1;
+						break;
+					}
+				}
+			}
+		}
+		wait_count = MAX_WAIT;
+		forced_reclaim = uma_reclaim_needed;
 		uma_reclaim_needed = 0;
 		pthread_mutex_unlock(&uma_drain_mtx);
+
 		uma_sx_xlock(&uma_drain_lock);
-		uma_reclaim_locked(true);
+		if (forced_reclaim)
+			uma_reclaim_locked(true);
+		else if (timed_out)
+			uma_period_cache_drain_safe();
 		uma_sx_xunlock(&uma_drain_lock);
 	}
 	return 0;

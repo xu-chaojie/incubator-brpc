@@ -56,8 +56,9 @@ const int ALLOW_UNUSED check_dummy = butil::thread_atexit(check_tls_block);
 static butil::FlatSet<void*> s_set;
 
 void* debug_block_allocate(size_t align, size_t block_size) {
-    //void* b = operator new (block_size, std::nothrow);
-    void *b = aligned_alloc(align, block_size);
+    void *b = NULL;
+    if (posix_memalign(&b, align, block_size))
+        return NULL;
     s_set.insert(b);
     return b;
 }

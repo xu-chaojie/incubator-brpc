@@ -55,9 +55,6 @@ class InputMessageBase;
 DECLARE_uint64(max_body_size);
 DECLARE_bool(log_error_text);
 
-// Hack to return attachment offset when packing 
-extern __thread size_t tls_attachment_off;
-
 // 3 steps to add a new Protocol:
 // Step1: Add a new ProtocolType in src/brpc/options.proto
 //        as identifier of the Protocol.
@@ -101,6 +98,7 @@ struct Protocol {
     // Call cntl->SetFailed() on error.
     typedef void (*PackRequest)(
         butil::IOBuf* iobuf_out,
+        size_t *attachment_off,
         SocketMessage** user_message_out,
         uint64_t correlation_id,
         const google::protobuf::MethodDescriptor* method,

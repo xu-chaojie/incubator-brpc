@@ -36,6 +36,7 @@ void SerializeEspRequest(
         const google::protobuf::Message* request);
 
 void PackEspRequest(butil::IOBuf* packet_buf,
+                    size_t *attachment_off, 
                     SocketMessage**,
                     uint64_t correlation_id,
                     const google::protobuf::MethodDescriptor*,

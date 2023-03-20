@@ -129,10 +129,10 @@ private:
 
 private:
     butil::IOBuf pad_buf_;
-    bthread::Mutex mutex_ BAIDU_CACHELINE_ALIGNMENT;
-
+    std::mutex mutex_ BAIDU_CACHELINE_ALIGNMENT;
     std::list<EventCallback *> external_events_;
     Status status_;
+    std::atomic<int> conn_reqs_;
     // Worker id
     int id_;
     butil::pctrie conn_map_;

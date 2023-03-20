@@ -20,6 +20,7 @@
 #include "bthread/unstable.h"
 #include "butil/logging.h"
 #include "butil/pctrie.h"
+#include "bvar/bvar.h"
 
 #include <gflags/gflags.h>
 #include <endian.h>
@@ -36,11 +37,11 @@
 #define AM_ID  0
 
 /*
- 忙等待能降低时延进而提高吞吐。但是当在连接上没有流量时，还是会使用整个CPU
- 核心。
- 为了避免资源浪费，使用一种自适应polling算法用来处理空闲的网络连接。
+ 忙等待能降低时延进而提高吞吐。但是当在连接上没有流量时，还是会使用整个CPU。
+ 为了避免资源浪费，可以设置另外一种模式:
+ 使用一种自适应polling算法用来处理空闲的网络连接。
  每当有数据发送出去时，会让worker等待一段时间做busy polling，这段时间是可以
- 配置的，当前设置为60(us)，这是希望在这段时间内会有数据返回回来，其中在
+ 配置的，当前设置为60(us)，这是希望在这段时间内会有数据返回来，其中在
  busy polling期间如果过了固定数量的循环次数，则使用pthread_yield()来让出CPU，
  这个循环次数是可以配置的，当前缺省设置为0, 最后如果过了这段时间没有收到
  数据，则线程停止busy polling，进入内核等待。
@@ -48,14 +49,17 @@
 
 namespace brpc {
 
+/* 系统缺省模式是忙等待 */
 DEFINE_bool(brpc_ucp_worker_busy_poll, true, "Enable/disable busy poll");
 DEFINE_int32(brpc_ucp_worker_poll_time, 60, "Polling duration in microseconds)");
 DEFINE_int32(brpc_ucp_worker_poll_yield, 0, "Thread yields after accumulated so many polling loops");
 DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
-DEFINE_bool(brpc_ucp_always_flush, false, "flush when disconnecting");
+DEFINE_int32(brpc_ucp_worker_progress, 350, "worker progress count");
+
+static bvar::LatencyRecorder &g_conn_lock_latency = *(new bvar::LatencyRecorder("ucp conn lock latency"));
 
 /*
-  接收端读写NVME也许需要4字节对齐的地址，这通过在接收端总是提供4字节
+  接收端读写NVME也许需要4字节对齐的地址，这里通过在接收端总是提供4字节
   对齐的接收缓冲区，并在发送端对attachment进行4字节对齐来达到。
 */
 #define NVME_DWORD_ALIGN  4
@@ -63,6 +67,55 @@ DEFINE_bool(brpc_ucp_always_flush, false, "flush when disconnecting");
 
 uint64_t g_supported_features;
 uint64_t g_required_features;
+
+class AutoInc {
+public:
+    AutoInc(std::atomic<int>& a) : count(a) {
+        count.fetch_add(1,  std::memory_order_relaxed);
+    }
+    ~AutoInc() {
+        count.fetch_sub(1,  std::memory_order_relaxed);
+    }
+
+private:
+    AutoInc(const AutoInc &) = delete;
+    void operator = (const AutoInc &) = delete;
+
+    std::atomic<int> &count;
+};
+
+struct Latency {
+    Latency() {
+        start_ = {0, 0};
+        end_ = {0, 0};
+    }
+
+    void start() {
+        gettimeofday(&start_, NULL);
+    }
+
+    void latch() {
+        gettimeofday(&end_, NULL);
+    }
+
+    long get() const {
+        struct timeval result;
+        timersub(&end_, &start_, &result);
+        return result.tv_sec * 1000000L + result.tv_usec;
+    }
+
+    long latch_and_record(bvar::LatencyRecorder *r) {
+        long temp = 0;
+
+        latch();
+        *r << (temp = get());
+        return temp;
+    }
+
+private:
+    struct timeval start_;
+    struct timeval end_;
+};
 
 struct Hello {
     uint64_t required_features;
@@ -231,6 +284,7 @@ public:
 
 UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
     : status_(UNINITIALIZED)
+    , conn_reqs_(0)
     , id_(id)
     , worker_tid_(INVALID_BTHREAD)
     , event_fd_(-1)
@@ -288,6 +342,9 @@ void UcpWorker::RemoveCallback(int id)
 
 void UcpWorker::AddConnection(UcpConnection *conn)
 {
+    // We use path-compressed-trie to lookup connection. The trie
+    // stores ucx ep handle which essentially is a pointer.
+    static_assert(sizeof(ucp_ep_h) == sizeof(uintptr_t));
     if (!butil::pctrie_lookup(&conn_map_, (uintptr_t)conn->ep_)) {
         butil::pctrie_insert(&conn_map_, (uintptr_t *)&conn->ep_,
             alloc_trie_node);
@@ -399,7 +456,7 @@ void UcpWorker::Stop()
 
 void UcpWorker::Join()
 {
-    std::unique_lock<bthread::Mutex> mu(mutex_);
+    std::unique_lock<decltype(mutex_)> mu(mutex_);
     if (status_ != STOPPING) {
         return;
     }
@@ -411,7 +468,7 @@ void UcpWorker::Join()
     ucp_worker_ = NULL;
 
     {
-        BAIDU_SCOPED_LOCK(mutex_);
+        mu.lock();
         status_ = READY;
     }
 }
@@ -506,7 +563,7 @@ void UcpWorker::DoRunWorker()
 {
     struct pollfd poll_info;
     struct timeval tv_start{0,0}, tv_end{0,0}, tv_int{0,0}, tv_now{0,0};
-    int count = 0;
+    int count = 0, step = 0;
 
     pthread_setname_np(pthread_self(), "ucp_worker");
     tv_int.tv_sec = 0;
@@ -524,9 +581,15 @@ void UcpWorker::DoRunWorker()
             count = 0;
         }
 again:
+        step = FLAGS_brpc_ucp_worker_progress;
         mutex_.lock();
-        while (ucp_worker_progress(ucp_worker_))
-            ;
+        while (ucp_worker_progress(ucp_worker_)) {
+            if (conn_reqs_.load(std::memory_order_relaxed))
+                break;
+            if (step <= 0)
+                break;
+            step--;
+        }
         DispatchAmMsgQ();
         DispatchRecvCompQ();
         KeepSendRequest();
@@ -977,7 +1040,13 @@ void UcpWorker::MergeInputMessage(UcpConnection *conn)
 
 int UcpWorker::Accept(UcpConnection *conn, ucp_conn_request_h req)
 {
+    AutoInc ai(conn_reqs_);
+    Latency lat;
+
+    lat.start();
     BAIDU_SCOPED_LOCK(mutex_);
+    lat.latch_and_record(&g_conn_lock_latency);
+
     int ret = CreateUcpEp(conn, req);
     if (ret == 0) {
         conn->state_ = UcpConnection::STATE_WAIT_HELLO;
@@ -989,7 +1058,13 @@ int UcpWorker::Accept(UcpConnection *conn, ucp_conn_request_h req)
 
 int UcpWorker::Connect(UcpConnection *conn, const butil::EndPoint &peer)
 {
+    AutoInc ai(conn_reqs_);
+    Latency lat;
+  
+    lat.start();
     BAIDU_SCOPED_LOCK(mutex_);
+    lat.latch_and_record(&g_conn_lock_latency);
+
     int ret = create_ucp_ep(ucp_worker_, peer, ErrorCallback, this, &conn->ep_);
     if (ret == 0) {
         conn->state_ = UcpConnection::STATE_HELLO;

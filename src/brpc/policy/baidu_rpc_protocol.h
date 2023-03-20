@@ -38,6 +38,7 @@ bool VerifyRpcRequest(const InputMessageBase* msg);
 
 // Pack `request' to `method' into `buf'.
 void PackRpcRequest(butil::IOBuf* buf,
+                    size_t *attachment_off,
                     SocketMessage**,
                     uint64_t correlation_id,
                     const google::protobuf::MethodDescriptor* method,

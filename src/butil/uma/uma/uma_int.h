@@ -181,6 +181,7 @@ struct uma_cache {
 	uma_bucket_t	uc_allocbucket;	/* Bucket to allocate from */
 	uint64_t	uc_allocs;	/* Count of allocations */
 	uint64_t	uc_frees;	/* Count of frees */
+	uint64_t	uc_clock;
 } UMA_ALIGN;
 
 typedef struct uma_cache * uma_cache_t;

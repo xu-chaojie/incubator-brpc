@@ -1751,6 +1751,7 @@ void H2UnsentResponse::Print(std::ostream& os) const {
 }
 
 void PackH2Request(butil::IOBuf*,
+                   size_t *attachment_off,
                    SocketMessage** user_message,
                    uint64_t correlation_id,
                    const google::protobuf::MethodDescriptor*,
@@ -1759,6 +1760,7 @@ void PackH2Request(butil::IOBuf*,
                    const Authenticator* auth) {
     ControllerPrivateAccessor accessor(cntl);
     
+    *attachment_off = 0;
     HttpHeader* header = &cntl->http_request();
     if (auth != NULL && header->GetHeader("Authorization") == NULL) {
         std::string auth_data;
