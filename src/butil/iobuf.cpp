@@ -72,6 +72,11 @@ bvar::PassiveStatus<int> g_iobuf_zone_obj_count("iobuf uma count",
     get_uma_iobuf_count, NULL);
 bvar::PassiveStatus<int> g_block_zone_obj_count("block uma count",
     get_uma_block_count, NULL);
+
+BAIDU_GLOBAL_INIT() {
+    g_iobuf_64k_overflow = new bvar::Adder<int> ("64K iobuf cache overflow");
+    g_iobuf_1M_overflow = new bvar::Adder<int>("1M iobuf cache overflow");
+}
 #endif
 
 static pthread_once_t uma_start_once = PTHREAD_ONCE_INIT;
@@ -80,11 +85,6 @@ static uma_zone_t block_zone;
 static LFStack iobuf_64K_cache;
 static LFStack iobuf_1M_cache;
 static void do_start_uma();
-
-BAIDU_GLOBAL_INIT() {
-    g_iobuf_64k_overflow = new bvar::Adder<int> ("64K iobuf cache overflow");
-    g_iobuf_1M_overflow = new bvar::Adder<int>("1M iobuf cache overflow");
-}
 
 static inline void start_uma()
 {

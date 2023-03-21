@@ -228,8 +228,6 @@ BUTIL_SRCS = [
     "src/butil/iobuf.cpp",
     "src/butil/binary_printer.cpp",
     "src/butil/popen.cpp",
-    "src/butil/refcountedobj.h",
-    "src/butil/refcountedobj.cpp",
     "src/butil/pctrie.h",
     "src/butil/pctrie.cc",
     "src/butil/lfstack.cpp",
