@@ -119,7 +119,6 @@ struct UcpAmMsg {
 
 private:
     UcpAmMsg();
-    void operator delete( void * ) {}
     template<typename T> friend class UcpMsgCache;
 };
 
@@ -139,7 +138,6 @@ struct UcpAmSendInfo {
 
 private:
     UcpAmSendInfo();
-    void operator delete( void * ) {}
     template<typename T> friend class UcpMsgCache;
 };
 
