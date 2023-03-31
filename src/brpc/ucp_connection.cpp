@@ -19,7 +19,7 @@
 #include "brpc/ucp_worker.h"
 #include "brpc/socket.h"
 #include "bvar/bvar.h"
-#include "butil/uma/uma/uma.h"
+#include "butil/lfstack.h"
 
 #include <gflags/gflags.h>
 #include <ucs/datastruct/list.h>
@@ -39,6 +39,8 @@ DEFINE_int32(brpc_ucp_ping_timeout, 10, "Number of seconds");
 // std vector允许保留的内存大小
 DEFINE_uint32(brpc_ucp_iov_reserve, 8, "Number of iov elements are cached");
 
+DEFINE_uint32(brpc_ucp_msg_cache, 10240, "Number of msg elements are cached");
+
 bthread_attr_t ucp_consumer_thread_attr = BTHREAD_ATTR_NORMAL;
 
 // C++全局变量析构不保证次序，下面的bvar需要活的比其他任何ucp connection对象
@@ -46,39 +48,34 @@ bthread_attr_t ucp_consumer_thread_attr = BTHREAD_ATTR_NORMAL;
 static bvar::Adder<int> *g_ucp_conn;
 
 template<typename T> class UcpMsgCache {
-    std::stack<T *> cache_;
+    butil::LFStack cache_;
 public:
+    UcpMsgCache() {
+        cache_.init(FLAGS_brpc_ucp_msg_cache);
+    }
     ~UcpMsgCache() {
-        while (!cache_.empty()) {
-            T *obj = cache_.top();
-            cache_.pop();
+        T* obj;
+        while ((obj = static_cast<T *>(cache_.pop()))) {
             delete obj;
         }
     }
 
     T *alloc() {
-        if (!cache_.empty()) {
-            T *obj = cache_.top();
-            cache_.pop();
+        T *obj = static_cast<T *>(cache_.pop());
+        if (obj)
             return obj;
-        }
         return new T;
     }
 
     void free(T *t) {
-        if (cache_.size() > 100) {
-            delete t;
-        } else {
-            cache_.push(t);
-        }
+        if (cache_.push(t) == 0)
+            return;
+        cache_.push(t);
     }
 };
 
-#if __cplusplus <= 199711L
-  #error This library needs at least a C++11 compliant compiler
-#endif
-static thread_local UcpMsgCache<UcpAmMsg> am_msg_cache;
-static thread_local UcpMsgCache<UcpAmSendInfo> am_send_cache;
+static UcpMsgCache<UcpAmMsg> am_msg_cache;
+static UcpMsgCache<UcpAmSendInfo> am_send_cache;
 
 BAIDU_GLOBAL_INIT() {
     g_ucp_conn = new bvar::Adder<int>("ucp_connection_count");
