@@ -117,12 +117,10 @@ struct UcpAmMsg {
     static UcpAmMsg *Allocate(void);
     static void Release(UcpAmMsg *o);
 
-    static int  init(void *mem, int size, int flags);
-    static void fini(void *mem, int size);
-
 private:
     UcpAmMsg();
     void operator delete( void * ) {}
+    template<typename T> friend class UcpMsgCache;
 };
 
 // A struct to hold sending message
@@ -139,12 +137,10 @@ struct UcpAmSendInfo {
     static UcpAmSendInfo *Allocate(void);
     static void Release(UcpAmSendInfo *o);
 
-    static int init(void *mem, int size, int flags);
-    static void fini(void *mem, int size);
-
 private:
     UcpAmSendInfo();
     void operator delete( void * ) {}
+    template<typename T> friend class UcpMsgCache;
 };
 
 // A class to represent ucp connection

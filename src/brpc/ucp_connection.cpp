@@ -26,6 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <stack>
 
 // 1. 为了在IO路径上减少时延，使用mempool来分配UcpAmMsg和UcpAmSendInfo
 // 2. UcpConnection中的mutex只在关闭时使用wrlock, 其他部分使用rdlock
@@ -40,35 +41,47 @@ DEFINE_uint32(brpc_ucp_iov_reserve, 8, "Number of iov elements are cached");
 
 bthread_attr_t ucp_consumer_thread_attr = BTHREAD_ATTR_NORMAL;
 
-static int get_am_count(void *arg);
-static int get_send_info_count(void *arg);
-
 // C++全局变量析构不保证次序，下面的bvar需要活的比其他任何ucp connection对象
 // 更久, 所以使用动态申请内存并且不再释放
 static bvar::Adder<int> *g_ucp_conn;
-static bvar::PassiveStatus<int> g_am_count("am_cnt", get_am_count, NULL);
-static bvar::PassiveStatus<int> g_send_info_count("send_info_cnt",
-	get_send_info_count, NULL);
 
-static uma_zone_t am_msg_zone;
-static uma_zone_t am_send_info_zone;
+template<typename T> class UcpMsgCache {
+    std::stack<T *> cache_;
+public:
+    ~UcpMsgCache() {
+        while (!cache_.empty()) {
+            T *obj = cache_.top();
+            cache_.pop();
+            delete obj;
+        }
+    }
+
+    T *alloc() {
+        if (!cache_.empty()) {
+            T *obj = cache_.top();
+            cache_.pop();
+            return obj;
+        }
+        return new T;
+    }
+
+    void free(T *t) {
+        if (cache_.size() > 100) {
+            delete t;
+        } else {
+            cache_.push(t);
+        }
+    }
+};
+
+#if __cplusplus <= 199711L
+  #error This library needs at least a C++11 compliant compiler
+#endif
+static thread_local UcpMsgCache<UcpAmMsg> am_msg_cache;
+static thread_local UcpMsgCache<UcpAmSendInfo> am_send_cache;
 
 BAIDU_GLOBAL_INIT() {
-    am_msg_zone = uma_zcreate("ucp::am_msg", sizeof(UcpAmMsg),
-         NULL, NULL, UcpAmMsg::init, UcpAmMsg::fini, UMA_ALIGN_PTR, 0);
-    am_send_info_zone = uma_zcreate("ucp::am_send_info", sizeof(UcpAmSendInfo),
-         NULL, NULL, UcpAmSendInfo::init, UcpAmSendInfo::fini, UMA_ALIGN_PTR, 0);
     g_ucp_conn = new bvar::Adder<int>("ucp_connection_count");
-}
-
-static int get_am_count(void *)
-{
-    return am_msg_zone ? uma_zone_get_cur(am_msg_zone) : 0;
-}
-
-static int get_send_info_count(void *)
-{
-    return am_send_info_zone ? uma_zone_get_cur(am_send_info_zone) : 0;
 }
 
 UcpAmMsg::UcpAmMsg()
@@ -82,21 +95,9 @@ UcpAmMsg::UcpAmMsg()
     flags = 0;
 }
 
-int UcpAmMsg::init(void *mem, int size, int flags)
-{
-    new (mem) UcpAmMsg;
-    return 0;
-}
-
-void UcpAmMsg::fini(void *mem, int size)
-{
-    UcpAmMsg *msg = static_cast<UcpAmMsg *>(mem);
-    msg->UcpAmMsg::~UcpAmMsg();
-}
-
 UcpAmMsg *UcpAmMsg::Allocate(void)
 {
-    return (UcpAmMsg *)uma_zalloc(am_msg_zone, 0);   
+    return am_msg_cache.alloc();
 }
 
 void UcpAmMsg::Release(UcpAmMsg *o)
@@ -120,7 +121,7 @@ void UcpAmMsg::Release(UcpAmMsg *o)
     if (o->iov.capacity() > FLAGS_brpc_ucp_iov_reserve) {
         o->iov = butil::iobuf_ucp_iov_t();
     }
-    uma_zfree(am_msg_zone, o);
+    am_msg_cache.free(o);
 }
 
 UcpAmSendInfo::UcpAmSendInfo()
@@ -131,21 +132,9 @@ UcpAmSendInfo::UcpAmSendInfo()
     nvec = 0;
 }
 
-int UcpAmSendInfo::init(void *mem, int size, int flags)
-{
-    new (mem) UcpAmSendInfo;
-    return 0;
-}
-
-void UcpAmSendInfo::fini(void *mem, int size)
-{
-    UcpAmSendInfo *info = static_cast<UcpAmSendInfo *>(mem);
-    info->UcpAmSendInfo::~UcpAmSendInfo();
-}
-
 UcpAmSendInfo *UcpAmSendInfo::Allocate(void)
 {
-    return (UcpAmSendInfo *)uma_zalloc(am_send_info_zone, 0);   
+    return am_send_cache.alloc();   
 }
 
 void UcpAmSendInfo::Release(UcpAmSendInfo *o)
@@ -160,7 +149,7 @@ void UcpAmSendInfo::Release(UcpAmSendInfo *o)
         o->iov = butil::iobuf_ucp_iov_t();
     }
 
-    uma_zfree(am_send_info_zone, o);
+    am_send_cache.free(o);
 }
 
 UcpConnection::UcpConnection(UcpCm *cm, UcpWorker *w)
