@@ -1253,12 +1253,14 @@ void UcpWorker::SetupSendRequestParam(const UcpAmSendInfo *msg,
     param->op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK |
                           UCP_OP_ATTR_FIELD_DATATYPE |
                           UCP_OP_ATTR_FIELD_USER_DATA|
-                          UCP_OP_ATTR_FIELD_FLAGS;
+                          UCP_OP_ATTR_FIELD_FLAGS |
+                          UCP_OP_ATTR_FIELD_MEMORY_TYPE;
     param->flags = UCP_AM_SEND_FLAG_REPLY;
     param->datatype = (msg->nvec == 1) ? ucp_dt_make_contig(1) :
                      ucp_dt_make_iov();
     param->user_data = (void *)(msg);
     param->cb.send = AmSendCb;
+    param->memory_type = UCS_MEMORY_TYPE_HOST;
     *buf = (msg->nvec == 1) ? msg->iov[0].buffer : (void *)&msg->iov[0];
     *len = (msg->nvec == 1) ? msg->iov[0].length : msg->nvec;
 }
