@@ -21,6 +21,15 @@
 #include <brpc/channel.h>
 #include "echo.pb.h"
 #include <bvar/bvar.h>
+#include <uct/api/uct.h>
+#include <brpc/ucp_cm.h>
+
+#include <rte_eal.h>
+#include <rte_errno.h>
+#include <rte_thread.h>
+#include <rte_malloc.h>
+
+#include <err.h>
 
 DEFINE_int32(thread_num, 50, "Number of threads to send requests");
 DEFINE_bool(use_bthread, false, "Use bthread to send requests");
@@ -88,9 +97,102 @@ static void* sender(void* arg) {
     return NULL;
 }
 
+void
+unaffinitize_thread(void)
+{
+    rte_cpuset_t new_cpuset;
+    long num_cores, i;
+
+    CPU_ZERO(&new_cpuset);
+
+    num_cores = sysconf(_SC_NPROCESSORS_CONF);
+
+    /* Create a mask containing all CPUs */
+    for (i = 0; i < num_cores; i++) {
+         CPU_SET(i, &new_cpuset);
+    }
+    rte_thread_set_affinity(&new_cpuset);
+}
+
+void* dpdk_mem_allocate(size_t align, size_t sz)
+{
+    /* rte_malloc seems fast enough, otherwise we need to use mempool */
+    // XXX use spdk_malloc instead
+    //void *p=spdk_malloc(sz, align, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+    return rte_malloc("iobuf", sz, align);
+}
+
+void dpdk_mem_free(void* p, size_t sz)
+{
+    // XXX use spdk_free instead
+    rte_free(p);
+}
+
+int dpdk_for_uct_alloc(void **address, size_t align,
+                      size_t length, const char *name)
+{
+    char buf[128];
+    void *p = rte_malloc(name, length, align);
+    //void *p=spdk_malloc(length, align, NULL, SPDK_ENV_SOCKET_ID_ANY, SPDK_MALLOC_DMA);
+    if (p) {
+        *address = p;
+#if 0
+        snprintf(buf, sizeof(buf),
+            "%s, sucess allocated: %p, align: %ld, length:%ld, name:%s\n", 
+            __func__, p, align, length, name);
+        LOG(INFO) << buf;
+#endif
+        return 0;
+    }
+    snprintf(buf, sizeof(buf),
+        "%s failed to allocate, align: %ld, length:%ld\n",
+        __func__, align, length);
+    LOG(ERROR) << buf;
+    return -ENOMEM;
+}
+
+int dpdk_for_uct_free(void *address, size_t length)
+{
+#if 0
+    char buf[128];
+    snprintf(buf, sizeof(buf), "%s, address: %p, length:%ld\n",
+             __func__, address, length);
+    LOG(INFO) << buf;
+#endif
+    rte_free(address);
+    //spdk_free(address);
+    return 0;
+}
+
+void dpdk_init(int argc, char **argv)
+{
+    char *eal_argv[] = {argv[0], (char *)"--in-memory", NULL};
+
+    if (rte_eal_init(2, eal_argv) == -1) {
+        errx(1, "rte_eal_init: %s", rte_strerror(rte_errno));
+    }
+
+    /* !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+     * Following is important. Above, we didn't specify dpdk runs on every cpu,
+     * thus dpdk will default bind our thread to first cpu, and the cpu mask
+     * is inherited by pthread_create(), causes every thread in future bind to
+     * same cpu! This causes big performance problem!
+     * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+     */
+    unaffinitize_thread();
+
+    // make iobuf use dpdk malloc & free
+    butil::iobuf::set_blockmem_allocate_and_deallocate(dpdk_mem_allocate, 
+        	dpdk_mem_free);
+    // make ucx use dpdk malloc & free
+    uct_set_user_mem_func(dpdk_for_uct_alloc, dpdk_for_uct_free); 
+}
+
 int main(int argc, char* argv[]) {
     // Parse gflags. We recommend you to use gflags as well.
     GFLAGS_NS::ParseCommandLineFlags(&argc, &argv, true);
+
+    dpdk_init(argc, argv);
 
     // A Channel represents a communication line to a Server. Notice that 
     // Channel is thread-safe and can be shared by all threads in your program.
