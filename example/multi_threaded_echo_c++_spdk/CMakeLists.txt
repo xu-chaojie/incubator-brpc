@@ -26,8 +26,8 @@ set(PFSD_LIB
     -Wl,--no-as-needed
     -Wl,--whole-archive
     -Bstatic
-    pfsd_svr
-    pfs
+    ##pfsd_svr
+    ##pfs
     -Wl,--no-whole-archive
     -Wl,--pop-state
 )
@@ -252,5 +252,5 @@ endif()
 add_executable(multi_threaded_echo_client client.cpp ${PROTO_SRC} ${PROTO_HEADER})
 add_executable(multi_threaded_echo_server server.cpp ${PROTO_SRC} ${PROTO_HEADER})
 
-target_link_libraries(multi_threaded_echo_client ${BRPC_LIB} ${DYNAMIC_LIB}) # ${GPERFTOOLS_LIBRARIES})
+target_link_libraries(multi_threaded_echo_client ${BRPC_LIB} ${SPDK_LIBS} ${SPDK_DEPS} ${DPDK_LIBS} ${DYNAMIC_LIB}) # ${GPERFTOOLS_LIBRARIES})
 target_link_libraries(multi_threaded_echo_server ${PFSD_LIB} ${SPDK_LIBS} ${SPDK_DEPS} ${DPDK_LIBS} ${BRPC_LIB} ${DYNAMIC_LIB}) # ${GPERFTOOLS_LIBRARIES})
