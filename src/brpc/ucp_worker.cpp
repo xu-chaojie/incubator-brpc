@@ -843,10 +843,12 @@ void UcpWorker::DispatchAmMsgQ()
         len = (msg->nvec == 1) ? msg->iov[0].length : msg->nvec;
         param.op_attr_mask = UCP_OP_ATTR_FIELD_CALLBACK  |
                              UCP_OP_ATTR_FIELD_DATATYPE  |
-                             UCP_OP_ATTR_FIELD_USER_DATA;
+                             UCP_OP_ATTR_FIELD_USER_DATA |
+                             UCP_OP_ATTR_FIELD_MEMORY_TYPE;
         param.datatype = (msg->nvec == 1) ? ucp_dt_make_contig(1) :
                          ucp_dt_make_iov();
         param.cb.recv_am = AmRecvCallback;
+        param.memory_type = UCS_MEMORY_TYPE_HOST;
         param.user_data = msg;
         msg->req = ucp_am_recv_data_nbx(ucp_worker_,
                         msg->desc, buf, len, &param);
