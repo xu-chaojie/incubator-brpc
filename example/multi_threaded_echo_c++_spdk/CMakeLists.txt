@@ -26,8 +26,8 @@ set(PFSD_LIB
     -Wl,--no-as-needed
     -Wl,--whole-archive
     -Bstatic
-    ##pfsd_svr
-    ##pfs
+    pfsd_svr
+    pfs
     -Wl,--no-whole-archive
     -Wl,--pop-state
 )
