@@ -57,6 +57,10 @@ DEFINE_bool(brpc_ucp_deliver_out_of_order, true, "Out of order delivery");
 DEFINE_int32(brpc_ucp_worker_progress, 350, "worker progress count");
 
 static bvar::LatencyRecorder &g_conn_lock_latency = *(new bvar::LatencyRecorder("ucp conn lock latency"));
+static bvar::LatencyRecorder &g_ucp_worker_progress_latency =
+    *(new bvar::LatencyRecorder("ucp_worker_progress_latency"));
+static bvar::LatencyRecorder &g_dispatch_am_msg_q_latency =
+    *(new bvar::LatencyRecorder("ucp_dispatch_am_msg_q_latency"));
 
 /*
   接收端读写NVME也许需要4字节对齐的地址，这里通过在接收端总是提供4字节
@@ -564,6 +568,7 @@ void UcpWorker::DoRunWorker()
     struct pollfd poll_info;
     struct timeval tv_start{0,0}, tv_end{0,0}, tv_int{0,0}, tv_now{0,0};
     int count = 0, step = 0;
+    butil::Timer ucp_worker_progress_timer;
 
     pthread_setname_np(pthread_self(), "ucp_worker");
     tv_int.tv_sec = 0;
@@ -583,6 +588,7 @@ void UcpWorker::DoRunWorker()
 again:
         step = FLAGS_brpc_ucp_worker_progress;
         mutex_.lock();
+        ucp_worker_progress_timer.start();
         while (ucp_worker_progress(ucp_worker_)) {
             if (conn_reqs_.load(std::memory_order_relaxed))
                 break;
@@ -590,6 +596,18 @@ again:
                 break;
             step--;
         }
+        ucp_worker_progress_timer.stop();
+        g_ucp_worker_progress_latency << ucp_worker_progress_timer.u_elapsed();
+
+        if (ucp_worker_progress_timer.m_elapsed(0.0) >= 200) {
+            LOG(WARNING) << "ucp_worker_progress takes "
+                         << ucp_worker_progress_timer.m_elapsed(0.0)
+                         << "ms, steps: "
+                         << FLAGS_brpc_ucp_worker_progress - step
+                         << ", conn_reqs: "
+                         << conn_reqs_.load(std::memory_order_relaxed);
+        }
+
         DispatchAmMsgQ();
         DispatchRecvCompQ();
         KeepSendRequest();
@@ -788,8 +806,34 @@ static inline void remove_from_recv_q(UcpAmList *list, UcpAmMsg *msg)
     msg->clear_flag(AMF_RECV_Q);
 }
 
+namespace {
+struct DispatchAmMsgQStat {
+    DispatchAmMsgQStat() {
+        timer.start();
+    }
+
+    ~DispatchAmMsgQStat() {
+        timer.stop();
+        const int64_t elapsed_us = timer.u_elapsed();
+        g_dispatch_am_msg_q_latency << elapsed_us;
+        if (elapsed_us >= 200 * 1000) {
+            LOG(WARNING) << "DispatchAmMsgQ takes " << (elapsed_us / 1000)
+                         << "ms, " << msg_count << " messages, "
+                         << prepare_buffer_ms << "ms in prepare_buffer";
+        }
+    }
+
+    int32_t msg_count = 0;
+    int64_t prepare_buffer_ms = 0;
+    butil::Timer timer;
+};
+}
+
 void UcpWorker::DispatchAmMsgQ()
 {
+    DispatchAmMsgQStat stat;
+    butil::Timer prepare_buffer_timer;
+
     UcpAmMsg *msg, *elem;
     ucp_request_param_t param;
     void *buf;
@@ -807,6 +851,7 @@ void UcpWorker::DispatchAmMsgQ()
     // msg_q_ is inited by TAILQ_CONCAT
 
     while (!TAILQ_EMPTY(&tmp_list)) {
+        ++stat.msg_count;
         msg = TAILQ_FIRST(&tmp_list);
         remove_from_msg_q(&tmp_list, msg);
         UcpConnectionRef conn = msg->conn;
@@ -832,12 +877,15 @@ void UcpWorker::DispatchAmMsgQ()
             msg->req = nullptr;
             goto request_done;
         }
- 
+
+        prepare_buffer_timer.start();
         rc = msg->buf.prepare_buffer(msg->length, INT_MAX,
                 &msg->iov, &msg->nvec);
         if (rc == -1) {
             LOG(FATAL) << "prepare failure";
         }
+        prepare_buffer_timer.stop();
+        stat.prepare_buffer_ms += prepare_buffer_timer.m_elapsed();
 
         buf = (msg->nvec == 1) ? msg->iov[0].buffer : (void *)&msg->iov[0];
         len = (msg->nvec == 1) ? msg->iov[0].length : msg->nvec;
