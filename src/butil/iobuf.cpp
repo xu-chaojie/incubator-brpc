@@ -522,6 +522,21 @@ struct IOBuf::Block {
 
 namespace iobuf {
 
+static void prepare_8k_cache()
+{
+    for (int i = 0; i < 300; ++i) {
+        void *mem = blockmem_allocate(PAGE_SIZE, IOBuf::DEFAULT_BLOCK_SIZE);
+        if (mem != NULL) {
+            if (iobuf_8K_cache.push(mem)) {
+                blockmem_deallocate(mem, IOBuf::DEFAULT_BLOCK_SIZE);
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+}
+
 static void do_start_cache()
 {
     int rc;
@@ -531,6 +546,7 @@ static void do_start_cache()
     CHECK(rc == 0) << "cannot create 64k size iobuf cache";
     rc = iobuf_1M_cache.init(FLAGS_butil_iobuf_1M_max);
     CHECK(rc == 0) << "cannot create 1M size iobuf cache";
+    prepare_8k_cache();
 }
 
 // for unit test
