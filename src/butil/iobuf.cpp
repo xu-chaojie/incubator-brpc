@@ -38,9 +38,6 @@
 #include "butil/logging.h"                  // CHECK, LOG
 #include "butil/fd_guard.h"                 // butil::fd_guard
 #include "butil/iobuf.h"
-#include "butil/uma/uma/uma.h"
-#include "butil/uma/uma/time.h"
-#include "butil/uma/uma/malloc.h"	    // For M_ZERO
 #include "butil/lfstack.h"
 #include "ucm/api/ucm.h"
 #ifndef IOBUF_NO_UMA_BVAR
@@ -54,52 +51,71 @@ namespace iobuf {
 #define SIZE_1M     (1024 * 1024)
 
 #ifndef IOBUF_NO_UMA_BVAR
-static int get_uma_iobuf_count(void *arg);
-static int get_uma_block_count(void *arg);
+static int get_8K_count(void *arg);
 static int get_64K_count(void *arg);
 static int get_1M_count(void *arg);
 #endif
 
-DEFINE_int32(butil_iobuf_64K_max, 1600, "Maximum number of 64k blocks cached");
+DEFINE_int32(butil_iobuf_8K_max, 40000, "Maximum number of 8k blocks cached");
+DEFINE_int32(butil_iobuf_64K_max, 3000, "Maximum number of 64k blocks cached");
 DEFINE_int32(butil_iobuf_1M_max, 100, "Maximum number of 1M blocks cached");
 
 #ifndef IOBUF_NO_UMA_BVAR
+bvar::PassiveStatus<int> g_iobuf_8K_count("8K iobuf", get_8K_count, NULL);
+bvar::Adder<int> *g_iobuf_8K_overflow = NULL;
 bvar::PassiveStatus<int> g_iobuf_64k_count("64K iobuf", get_64K_count, NULL);
 bvar::Adder<int> *g_iobuf_64k_overflow = NULL;
 bvar::PassiveStatus<int> g_iobuf_1M_count("1M iobuf", get_1M_count, NULL);
 bvar::Adder<int> *g_iobuf_1M_overflow = NULL;
-bvar::PassiveStatus<int> g_iobuf_zone_obj_count("iobuf uma count",
-    get_uma_iobuf_count, NULL);
-bvar::PassiveStatus<int> g_block_zone_obj_count("block uma count",
-    get_uma_block_count, NULL);
 
 BAIDU_GLOBAL_INIT() {
+    g_iobuf_8K_overflow = new bvar::Adder<int> ("8K iobuf cache overflow");
     g_iobuf_64k_overflow = new bvar::Adder<int> ("64K iobuf cache overflow");
     g_iobuf_1M_overflow = new bvar::Adder<int>("1M iobuf cache overflow");
 }
+
 #endif
 
-static pthread_once_t uma_start_once = PTHREAD_ONCE_INIT;
-static uma_zone_t iobuf_zone;
-static uma_zone_t block_zone;
+static pthread_once_t cache_start_once = PTHREAD_ONCE_INIT;
+static LFStack iobuf_8K_cache;
 static LFStack iobuf_64K_cache;
 static LFStack iobuf_1M_cache;
-static void do_start_uma();
+static void do_start_cache();
 
-static inline void start_uma()
+/*
+ * ratecheck(): simple time-based rate-limit checking.
+ */
+static int ratecheck(struct timeval *lasttime, const struct timeval *mininterval)
 {
-    pthread_once(&uma_start_once, do_start_uma);
+	struct timeval tv, delta;
+	int rv = 0;
+
+	gettimeofday(&tv, NULL);		/* NB: 10ms precision */
+	timersub(&tv, lasttime, &delta);
+
+	/*
+	 * check for 0,0 is so that the message will be seen at least once,
+	 * even if interval is huge.
+	 */
+	if (timercmp(&delta, mininterval, >=) ||
+	    (lasttime->tv_sec == 0 && lasttime->tv_usec == 0)) {
+		*lasttime = tv;
+		rv = 1;
+	}
+
+	return (rv);
+}
+
+static inline void start_cache()
+{
+    pthread_once(&cache_start_once, do_start_cache);
 }
 
 #ifndef IOBUF_NO_UMA_BVAR
-static int get_uma_iobuf_count(void *)
-{
-    return iobuf_zone ? uma_zone_get_cur(iobuf_zone) : 0;
-}
 
-static int get_uma_block_count(void *)
+static int get_8K_count(void *)
 {
-    return block_zone ? uma_zone_get_cur(block_zone) : 0;
+    return iobuf_8K_cache.size();
 }
 
 static int get_64K_count(void *)
@@ -325,43 +341,23 @@ void set_blockmem_allocate_and_deallocate(blockmem_allocate_t a,
     blockmem_deallocate = f;                                               
 } 
 
-static int iobuf_import(void *arg, void **store, int count, int flags)
-{
-    constexpr int align = PAGE_SIZE;
-    constexpr int size = IOBuf::DEFAULT_BLOCK_SIZE;
-    int i;
-    for (i = 0; i < count; ++i) {
-        void *p = blockmem_allocate(align, size);
-        if (p == NULL)
-            break;
-        store[i] = p;
-        if (flags & M_ZERO)
-            memset(p, 0, size);
-    }
-    return i;
-}
-
-static void iobuf_release(void *arg, void **store, int count)
-{
-    for (int i = 0;i < count; ++i) {
-        call_blockmem_deallocate(store[i], IOBuf::DEFAULT_BLOCK_SIZE);
-    }
-}
-
 static void *do_blockmem_allocate(size_t size)
 {
-    start_uma();
-    if (size == IOBuf::DEFAULT_BLOCK_SIZE)
-        return uma_zalloc(iobuf_zone, 0);
-    if (size == SIZE_64K || size == SIZE_1M) {
-        void *buf;
-        if (size == SIZE_64K)
-            buf = iobuf_64K_cache.pop();
-        else
-            buf = iobuf_1M_cache.pop();
-        if (buf) {
-            return buf;
-        }
+    void *buf = NULL;
+    start_cache();
+    switch(size) {
+    case IOBuf::DEFAULT_BLOCK_SIZE:
+        buf = iobuf_8K_cache.pop();
+        break;
+    case SIZE_64K:
+        buf = iobuf_64K_cache.pop();
+        break;
+    case SIZE_1M:
+        buf = iobuf_1M_cache.pop();
+        break;
+    }
+    if (buf) {
+        return buf;
     }
     return blockmem_allocate(PAGE_SIZE, size);
 }
@@ -369,38 +365,42 @@ static void *do_blockmem_allocate(size_t size)
 static void do_blockmem_deallocate(void *mem, size_t size)
 {
     constexpr struct timeval interval = {30, 0};
+    struct timeval *tv = NULL; 
+    const char *msg = NULL;
 
-    if (size == IOBuf::DEFAULT_BLOCK_SIZE)
-        uma_zfree(iobuf_zone, mem);
+    if (size == IOBuf::DEFAULT_BLOCK_SIZE) {
+        static struct timeval tv_def_last = {0, 0};
+        if (!iobuf_8K_cache.push(mem))
+            return;
+#ifndef IOBUF_NO_UMA_BVAR
+        *g_iobuf_8K_overflow << 1;
+#endif
+        tv = &tv_def_last;
+        msg = "8K";
+    }
     else if (size == SIZE_64K) {
         static struct timeval tv_64k_last = {0, 0};
         if (!iobuf_64K_cache.push(mem))
             return;
-
-        call_blockmem_deallocate(mem, size);
-
-        if (uma_ratecheck(&tv_64k_last, &interval)) {
-            LOG(WARNING) << "64k iobuf cache overflow";
-        }
-
 #ifndef IOBUF_NO_UMA_BVAR
         *g_iobuf_64k_overflow << 1;
 #endif
+        tv = &tv_64k_last;
+        msg = "64K";
     } else if (size == SIZE_1M) {
         static struct timeval tv_1M_last = {0, 0};
         if (!iobuf_1M_cache.push(mem))
             return;
-        call_blockmem_deallocate(mem, size);
-
-        if (uma_ratecheck(&tv_1M_last, &interval)) {
-            LOG(WARNING) << "1M iobuf cache overflow";
-        }
-
 #ifndef IOBUF_NO_UMA_BVAR
         *g_iobuf_1M_overflow << 1;
 #endif
-    } else {
-        call_blockmem_deallocate(mem, size);
+        tv = &tv_1M_last;
+        msg = "1M";
+    }
+    call_blockmem_deallocate(mem, size);
+    if (msg) {
+        if (ratecheck(tv, &interval))
+            LOG(WARNING) << msg << " iobuf cache overflow";
     }
 }
 
@@ -524,7 +524,7 @@ struct IOBuf::Block {
                 e->deleter2(data, e->arg);
                 this->~Block();
             }
-            uma_zfree(iobuf::block_zone, this);
+	    free(this);
         }
     }
 
@@ -538,21 +538,31 @@ struct IOBuf::Block {
 
 namespace iobuf {
 
-static void do_start_uma()
+static void prepare_8k_cache()
 {
-    iobuf_zone = uma_zcache_create("iobuf", IOBuf::DEFAULT_BLOCK_SIZE,
-         NULL, NULL, NULL, NULL, iobuf_import, iobuf_release, NULL, 0);
-    CHECK(iobuf_zone != NULL) << "cannot create iobuf_zone";
-    uma_prealloc(iobuf_zone, 1000);
-    block_zone = uma_zcreate("iobuf::block", sizeof(IOBuf::Block),
-         NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
-    uma_prealloc(block_zone, 1000);
-    CHECK(block_zone != NULL) << "cannot create block_zone";
+    for (int i = 0; i < 300; ++i) {
+        void *mem = blockmem_allocate(PAGE_SIZE, IOBuf::DEFAULT_BLOCK_SIZE);
+        if (mem != NULL) {
+            if (iobuf_8K_cache.push(mem)) {
+                blockmem_deallocate(mem, IOBuf::DEFAULT_BLOCK_SIZE);
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+}
+
+static void do_start_cache()
+{
     int rc;
+    rc = iobuf_8K_cache.init(FLAGS_butil_iobuf_8K_max);
+    CHECK(rc == 0) << "cannot create 8k size iobuf cache";
     rc = iobuf_64K_cache.init(FLAGS_butil_iobuf_64K_max);
     CHECK(rc == 0) << "cannot create 64k size iobuf cache";
     rc = iobuf_1M_cache.init(FLAGS_butil_iobuf_1M_max);
     CHECK(rc == 0) << "cannot create 1M size iobuf cache";
+    prepare_8k_cache();
 }
 
 // for unit test
@@ -571,7 +581,7 @@ uint32_t block_size(IOBuf::Block const* b) {
 }
 
 inline IOBuf::Block* create_block(const size_t block_size) {
-    iobuf::start_uma();
+    iobuf::start_cache();
 
     if (block_size > 0xFFFFFFFFULL) {
         LOG(FATAL) << "block_size=" << block_size << " is too large";
@@ -581,8 +591,7 @@ inline IOBuf::Block* create_block(const size_t block_size) {
     if (mem == NULL) {
         return NULL;
     }
-    auto blk_mem = uma_zalloc(block_zone, 0);
-    auto blk = new (blk_mem) IOBuf::Block(mem, block_size);
+    auto blk = new IOBuf::Block(mem, block_size);
     blk->mem_size = block_size;
     return blk;
 }
@@ -1591,21 +1600,16 @@ static void free_wrapper(void *mem, void *arg)
 }
 
 int IOBuf::append_user_data(void* data, size_t size, UserDataDeleter2 deleter, void *arg) {
-    iobuf::start_uma();
+    iobuf::start_cache();
 
     if (size > 0xFFFFFFFFULL - 100) {
         LOG(FATAL) << "data_size=" << size << " is too large";
         return -1;
     }
-    auto blk_mem = uma_zalloc(iobuf::block_zone, 0);
-    if (blk_mem == NULL) {
-        return -1;
-    }
-
     if (deleter == NULL) {
         deleter = (UserDataDeleter2) &free_wrapper;
     }
-    IOBuf::Block* b = new (blk_mem) IOBuf::Block((char*)data, size, deleter, arg);
+    IOBuf::Block* b = new IOBuf::Block((char*)data, size, deleter, arg);
     const IOBuf::BlockRef r = { 0, b->cap, b };
     _move_back_ref(r);
     return 0;
