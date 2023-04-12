@@ -77,9 +77,9 @@ BAIDU_GLOBAL_INIT() {
 #endif
 
 static pthread_once_t cache_start_once = PTHREAD_ONCE_INIT;
-static LFStack iobuf_8K_cache;
-static LFStack iobuf_64K_cache;
-static LFStack iobuf_1M_cache;
+static LFStack &iobuf_8K_cache = *(new LFStack());
+static LFStack &iobuf_64K_cache = *(new LFStack());
+static LFStack &iobuf_1M_cache = *(new LFStack());
 static void do_start_cache();
 
 /*
