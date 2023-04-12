@@ -356,7 +356,7 @@ static void do_blockmem_deallocate(void *mem, size_t size)
 {
     constexpr struct timeval interval = {30, 0};
     struct timeval *tv = NULL; 
-    const char *msg = "";
+    const char *msg = NULL;
 
     if (size == IOBuf::DEFAULT_BLOCK_SIZE) {
         static struct timeval tv_def_last = {0, 0};
