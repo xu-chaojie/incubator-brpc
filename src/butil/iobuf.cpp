@@ -80,23 +80,23 @@ BAIDU_GLOBAL_INIT() {
  */
 static int ratecheck(struct timeval *lasttime, const struct timeval *mininterval)
 {
-	struct timeval tv, delta;
-	int rv = 0;
+    struct timeval tv, delta;
+    int rv = 0;
 
-	gettimeofday(&tv, NULL);		/* NB: 10ms precision */
-	timersub(&tv, lasttime, &delta);
+    gettimeofday(&tv, NULL);		/* NB: 10ms precision */
+    timersub(&tv, lasttime, &delta);
 
-	/*
-	 * check for 0,0 is so that the message will be seen at least once,
-	 * even if interval is huge.
-	 */
-	if (timercmp(&delta, mininterval, >=) ||
-	    (lasttime->tv_sec == 0 && lasttime->tv_usec == 0)) {
-		*lasttime = tv;
-		rv = 1;
-	}
+    /*
+     * check for 0,0 is so that the message will be seen at least once,
+     * even if interval is huge.
+     */
+    if (timercmp(&delta, mininterval, >=) ||
+            (lasttime->tv_sec == 0 && lasttime->tv_usec == 0)) {
+        *lasttime = tv;
+        rv = 1;
+    }
 
-	return (rv);
+    return (rv);
 }
 
 static inline void start_cache()
@@ -270,7 +270,7 @@ int set_external_io_funcs(struct iobuf_io_funcs funcs)
         funcs.iof_pwritev == NULL ||
         funcs.iof_readv == NULL ||
         funcs.iof_writev == NULL) {
-	errno = EINVAL;
+        errno = EINVAL;
         return -1;
     }
 
