@@ -478,7 +478,6 @@ public:
 
 private:
     static void return_cached_blocks_impl(Block*);
-    void free_cached_blocks();
     ssize_t pappend_from_dev_descriptor_impl(int fd, off_t offset,
             size_t max_count, bool *max_vec_hit);
 

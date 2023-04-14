@@ -1964,7 +1964,7 @@ ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, iobuf_ucp_iov_t 
 {
     // Release the remaining blocks from the last time which may not be
     // compatible with nvme PRP
-    free_cached_blocks();
+    return_cached_blocks();
 
     auto &vec = *_vec;
     int &nvec = *_nvec;
@@ -2157,7 +2157,7 @@ ssize_t IOPortal::pappend_from_dev_descriptor(int fd, off_t offset,
 
     // PRP may can not use partial memory page
     // throw away left behind
-    free_cached_blocks();
+    return_cached_blocks();
 
     while (total < max_count) {
         size_t to_read = max_count - total;
@@ -2272,18 +2272,6 @@ start:
         ivec++;
     } while (total_len);
     return nr;
-}
-
-void IOPortal::free_cached_blocks() {
-    if (!_block)
-        return;
-    Block *b = _block;
-    while (b) {
-        IOBuf::Block* const saved_next = b->portal_next;
-        b->dec_ref();
-        b = saved_next;
-    }
-    _block = NULL;
 }
 
 void IOPortal::return_cached_blocks_impl(Block* b) {
