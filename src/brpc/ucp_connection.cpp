@@ -255,7 +255,8 @@ void UcpConnection::DataReady()
     data_ready_flag_ = false;
     // If state is STATE_CLOSED, we don't need to notify upper layer,
     // because only upper layer sets state to STATE_CLOSED with Close()
-    // function.
+    // function which needs connection lock and worker lock. While we are
+    // executing this function, worker lock is locked.
     if (state_ != STATE_CLOSED) {
         if (socket_id_set_)
             Socket::StartInputEvent(socket_id_, EPOLLIN,
