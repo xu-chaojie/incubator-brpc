@@ -2009,7 +2009,7 @@ ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, iobuf_ucp_iov_t 
         block_size = SIZE_64K;
     else
         block_size = SIZE_1M;
-    size_hint = (max_count + block_size - 1) & ~(block_size - 1);
+    size_hint = (max_count + block_size - 1) / block_size;
     vec.reserve(size_hint);
     nvec = 0;
     do {
@@ -2360,7 +2360,8 @@ ssize_t IOPortal::append_aligned_to_page_end(const IOBuf* buf) {
             _block = saved_next;
         } else {
             // should be last block
-            assert(NULL == _block->portal_next);
+            CHECK(NULL == _block->portal_next);
+            break;
         }
     }
     return space;
