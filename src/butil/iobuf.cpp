@@ -51,9 +51,9 @@ DEFINE_int32(butil_iobuf_8K_max, 40000, "Maximum number of 8k blocks cached");
 DEFINE_int32(butil_iobuf_64K_max, 3000, "Maximum number of 64k blocks cached");
 DEFINE_int32(butil_iobuf_1M_max, 100, "Maximum number of 1M blocks cached");
 
-static butil::atomic<int> g_iobuf_8K_overflow;
-static butil::atomic<int> g_iobuf_64K_overflow;
-static butil::atomic<int> g_iobuf_1M_overflow;
+static butil::atomic<int> iobuf_8K_overflow;
+static butil::atomic<int> iobuf_64K_overflow;
+static butil::atomic<int> iobuf_1M_overflow;
 
 static pthread_once_t cache_start_once = PTHREAD_ONCE_INIT;
 static LFStack iobuf_8K_cache;
@@ -107,17 +107,17 @@ int get_1M_count()
 
 int get_8K_overflow()
 {
-    return g_iobuf_8K_overflow.load(butil::memory_order_relaxed);
+    return iobuf_8K_overflow.load(butil::memory_order_relaxed);
 }
 
 int get_64K_overflow()
 {
-    return g_iobuf_64K_overflow.load(butil::memory_order_relaxed);
+    return iobuf_64K_overflow.load(butil::memory_order_relaxed);
 }
 
 int get_1M_overflow()
 {
-    return g_iobuf_1M_overflow.load(butil::memory_order_relaxed);
+    return iobuf_1M_overflow.load(butil::memory_order_relaxed);
 }
 
 typedef ssize_t (*iov_function)(int fd, const struct iovec *vector,
@@ -364,7 +364,7 @@ static void do_blockmem_deallocate(void *mem, size_t size)
         static struct timeval tv_def_last = {0, 0};
         if (!iobuf_8K_cache.push(mem))
             return;
-        counter = &g_iobuf_8K_overflow;
+        counter = &iobuf_8K_overflow;
         tv = &tv_def_last;
         msg = "8K";
     }
@@ -372,14 +372,14 @@ static void do_blockmem_deallocate(void *mem, size_t size)
         static struct timeval tv_64K_last = {0, 0};
         if (!iobuf_64K_cache.push(mem))
             return;
-        counter = &g_iobuf_64K_overflow;
+        counter = &iobuf_64K_overflow;
         tv = &tv_64K_last;
         msg = "64K";
     } else if (size == SIZE_1M) {
         static struct timeval tv_1M_last = {0, 0};
         if (!iobuf_1M_cache.push(mem))
             return;
-        counter = &g_iobuf_1M_overflow;
+        counter = &iobuf_1M_overflow;
         tv = &tv_1M_last;
         msg = "1M";
     }
@@ -513,7 +513,7 @@ struct IOBuf::Block {
                 e->deleter2(data, e->arg);
                 this->~Block();
             }
-	    free(this);
+            free(this);
         }
     }
 
