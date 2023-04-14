@@ -40,9 +40,6 @@
 #include "butil/iobuf.h"
 #include "butil/lfstack.h"
 #include "ucm/api/ucm.h"
-#ifndef IOBUF_NO_UMA_BVAR
-#include "bvar/bvar.h"
-#endif
 
 namespace butil {
 namespace iobuf {
@@ -50,36 +47,19 @@ namespace iobuf {
 #define SIZE_64K    (64 * 1024)
 #define SIZE_1M     (1024 * 1024)
 
-#ifndef IOBUF_NO_UMA_BVAR
-static int get_8K_count(void *arg);
-static int get_64K_count(void *arg);
-static int get_1M_count(void *arg);
-#endif
-
 DEFINE_int32(butil_iobuf_8K_max, 40000, "Maximum number of 8k blocks cached");
 DEFINE_int32(butil_iobuf_64K_max, 3000, "Maximum number of 64k blocks cached");
 DEFINE_int32(butil_iobuf_1M_max, 100, "Maximum number of 1M blocks cached");
 
-#ifndef IOBUF_NO_UMA_BVAR
-bvar::PassiveStatus<int> g_iobuf_8K_count("8K iobuf", get_8K_count, NULL);
-bvar::Adder<int> *g_iobuf_8K_overflow = NULL;
-bvar::PassiveStatus<int> g_iobuf_64k_count("64K iobuf", get_64K_count, NULL);
-bvar::Adder<int> *g_iobuf_64k_overflow = NULL;
-bvar::PassiveStatus<int> g_iobuf_1M_count("1M iobuf", get_1M_count, NULL);
-bvar::Adder<int> *g_iobuf_1M_overflow = NULL;
-
-BAIDU_GLOBAL_INIT() {
-    g_iobuf_8K_overflow = new bvar::Adder<int> ("8K iobuf cache overflow");
-    g_iobuf_64k_overflow = new bvar::Adder<int> ("64K iobuf cache overflow");
-    g_iobuf_1M_overflow = new bvar::Adder<int>("1M iobuf cache overflow");
-}
-
-#endif
+static butil::atomic<int> iobuf_8K_overflow;
+static butil::atomic<int> iobuf_64K_overflow;
+static butil::atomic<int> iobuf_1M_overflow;
 
 static pthread_once_t cache_start_once = PTHREAD_ONCE_INIT;
 static LFStack &iobuf_8K_cache = *(new LFStack());
 static LFStack &iobuf_64K_cache = *(new LFStack());
 static LFStack &iobuf_1M_cache = *(new LFStack());
+
 static void do_start_cache();
 
 /*
@@ -87,23 +67,23 @@ static void do_start_cache();
  */
 static int ratecheck(struct timeval *lasttime, const struct timeval *mininterval)
 {
-	struct timeval tv, delta;
-	int rv = 0;
+    struct timeval tv, delta;
+    int rv = 0;
 
-	gettimeofday(&tv, NULL);		/* NB: 10ms precision */
-	timersub(&tv, lasttime, &delta);
+    gettimeofday(&tv, NULL);		/* NB: 10ms precision */
+    timersub(&tv, lasttime, &delta);
 
-	/*
-	 * check for 0,0 is so that the message will be seen at least once,
-	 * even if interval is huge.
-	 */
-	if (timercmp(&delta, mininterval, >=) ||
-	    (lasttime->tv_sec == 0 && lasttime->tv_usec == 0)) {
-		*lasttime = tv;
-		rv = 1;
-	}
+    /*
+     * check for 0,0 is so that the message will be seen at least once,
+     * even if interval is huge.
+     */
+    if (timercmp(&delta, mininterval, >=) ||
+            (lasttime->tv_sec == 0 && lasttime->tv_usec == 0)) {
+        *lasttime = tv;
+        rv = 1;
+    }
 
-	return (rv);
+    return (rv);
 }
 
 static inline void start_cache()
@@ -111,23 +91,35 @@ static inline void start_cache()
     pthread_once(&cache_start_once, do_start_cache);
 }
 
-#ifndef IOBUF_NO_UMA_BVAR
-
-static int get_8K_count(void *)
+int get_8K_count()
 {
     return iobuf_8K_cache.size();
 }
 
-static int get_64K_count(void *)
+int get_64K_count()
 {
     return iobuf_64K_cache.size();
 }
 
-static int get_1M_count(void *)
+int get_1M_count()
 {
     return iobuf_1M_cache.size();
 }
-#endif
+
+int get_8K_overflow()
+{
+    return iobuf_8K_overflow.load(butil::memory_order_relaxed);
+}
+
+int get_64K_overflow()
+{
+    return iobuf_64K_overflow.load(butil::memory_order_relaxed);
+}
+
+int get_1M_overflow()
+{
+    return iobuf_1M_overflow.load(butil::memory_order_relaxed);
+}
 
 typedef ssize_t (*iov_function)(int fd, const struct iovec *vector,
                                    int count, off_t offset);
@@ -280,7 +272,7 @@ int set_external_io_funcs(struct iobuf_io_funcs funcs)
         funcs.iof_pwritev == NULL ||
         funcs.iof_readv == NULL ||
         funcs.iof_writev == NULL) {
-	errno = EINVAL;
+        errno = EINVAL;
         return -1;
     }
 
@@ -337,8 +329,8 @@ void reset_blockmem_allocate_and_deallocate() {
 void set_blockmem_allocate_and_deallocate(blockmem_allocate_t a,                
         blockmem_deallocate_t f)                                                
 {                                                                               
-    blockmem_allocate = a;                                                 
-    blockmem_deallocate = f;                                               
+    blockmem_allocate = a;
+    blockmem_deallocate = f;
 } 
 
 static void *do_blockmem_allocate(size_t size)
@@ -367,37 +359,35 @@ static void do_blockmem_deallocate(void *mem, size_t size)
     constexpr struct timeval interval = {30, 0};
     struct timeval *tv = NULL; 
     const char *msg = NULL;
+    butil::atomic<int> *counter = NULL;
 
     if (size == IOBuf::DEFAULT_BLOCK_SIZE) {
         static struct timeval tv_def_last = {0, 0};
         if (!iobuf_8K_cache.push(mem))
             return;
-#ifndef IOBUF_NO_UMA_BVAR
-        *g_iobuf_8K_overflow << 1;
-#endif
+        counter = &iobuf_8K_overflow;
         tv = &tv_def_last;
         msg = "8K";
     }
     else if (size == SIZE_64K) {
-        static struct timeval tv_64k_last = {0, 0};
+        static struct timeval tv_64K_last = {0, 0};
         if (!iobuf_64K_cache.push(mem))
             return;
-#ifndef IOBUF_NO_UMA_BVAR
-        *g_iobuf_64k_overflow << 1;
-#endif
-        tv = &tv_64k_last;
+        counter = &iobuf_64K_overflow;
+        tv = &tv_64K_last;
         msg = "64K";
     } else if (size == SIZE_1M) {
         static struct timeval tv_1M_last = {0, 0};
         if (!iobuf_1M_cache.push(mem))
             return;
-#ifndef IOBUF_NO_UMA_BVAR
-        *g_iobuf_1M_overflow << 1;
-#endif
+        counter = &iobuf_1M_overflow;
         tv = &tv_1M_last;
         msg = "1M";
     }
     call_blockmem_deallocate(mem, size);
+    if (counter) {
+        counter->fetch_add(1, butil::memory_order_relaxed);
+    }
     if (msg) {
         if (ratecheck(tv, &interval))
             LOG(WARNING) << msg << " iobuf cache overflow";
@@ -524,7 +514,7 @@ struct IOBuf::Block {
                 e->deleter2(data, e->arg);
                 this->~Block();
             }
-	    free(this);
+            free(this);
         }
     }
 
@@ -538,7 +528,7 @@ struct IOBuf::Block {
 
 namespace iobuf {
 
-static void prepare_8k_cache()
+static void prepare_8K_cache()
 {
     for (int i = 0; i < 300; ++i) {
         void *mem = blockmem_allocate(PAGE_SIZE, IOBuf::DEFAULT_BLOCK_SIZE);
@@ -557,12 +547,12 @@ static void do_start_cache()
 {
     int rc;
     rc = iobuf_8K_cache.init(FLAGS_butil_iobuf_8K_max);
-    CHECK(rc == 0) << "cannot create 8k size iobuf cache";
+    CHECK(rc == 0) << "cannot create 8KB size iobuf cache";
     rc = iobuf_64K_cache.init(FLAGS_butil_iobuf_64K_max);
-    CHECK(rc == 0) << "cannot create 64k size iobuf cache";
+    CHECK(rc == 0) << "cannot create 64KB size iobuf cache";
     rc = iobuf_1M_cache.init(FLAGS_butil_iobuf_1M_max);
     CHECK(rc == 0) << "cannot create 1M size iobuf cache";
-    prepare_8k_cache();
+    prepare_8K_cache();
 }
 
 // for unit test
@@ -2002,14 +1992,15 @@ ssize_t IOPortal::pappend_from_file_descriptor(
 
 ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, iobuf_ucp_iov_t *_vec, int *_nvec)
 {
-    // clear left behind blocks which may not be compatible with nvme PRP
+    // Release the remaining blocks from the last time which may not be
+    // compatible with nvme PRP
     return_cached_blocks();
 
     auto &vec = *_vec;
     int &nvec = *_nvec;
     size_t left = 0, block_size = 0, space = 0, forced_block_size = 0;
     Block* prev_p = NULL;
-    Block* p = _block;
+    Block* p = NULL;
     int size_hint;
 
     if (max_count < SIZE_64K)
@@ -2049,7 +2040,6 @@ again:
                 errno = ENOMEM;
                 return -1;
             }
-            _release_to_tls = false;
             if (prev_p != NULL) {
                 prev_p->portal_next = p;
             } else {
@@ -2078,6 +2068,7 @@ ssize_t IOPortal::append_from_buffer(size_t nr) {
         _push_back_ref(r);
         _block->size += len;
         if (_block->full()) {
+            // a full block can not be released to TLS, remove it from chain
             Block* const saved_next = _block->portal_next;
             _block->dec_ref();  // _block may be deleted
             _block = saved_next;
@@ -2235,7 +2226,6 @@ start:
             // NVME PRP requirements, PRP requires second iovec to be start of
             // a page and its length is times of page size.
             p = iobuf::create_block();
-            _release_to_tls = false;
             if (BAIDU_UNLIKELY(!p)) {
                 errno = ENOMEM;
                 return -1;
@@ -2251,7 +2241,7 @@ start:
         p->size = roundup(p->size, 4);
         if (p->size >= p->cap) {
             // we fully used it
-            p->size = p->cap; 
+            p->size = p->cap;
             if (p == _block)
                 _block = NULL;
             Block* const saved_next = p->portal_next;
@@ -2301,6 +2291,7 @@ start:
         _push_back_ref(r);
         _block->size += len;
         if (_block->full()) {
+            // a full block can not be released to TLS, remove it from chain
             Block* const saved_next = _block->portal_next;
             _block->dec_ref();  // _block may be deleted
             _block = saved_next;
@@ -2319,10 +2310,10 @@ ssize_t IOPortal::append_aligned_to_page_end(const IOBuf* buf) {
     size_t space = 0;
     Block* prev_p = NULL;
     Block* p = _block;
+
     while (total) {
         if (p == NULL) {
             p = iobuf::create_block();
-            _release_to_tls = false;
             if (BAIDU_UNLIKELY(!p)) {
                 errno = ENOMEM;
                 return -1;
@@ -2359,19 +2350,24 @@ ssize_t IOPortal::append_aligned_to_page_end(const IOBuf* buf) {
         prev_p = p;
         p = p->portal_next;
     };
+
+    // a full block can not be released to TLS, remove it from chain
+    while (_block != NULL) {
+        if (_block->full()) {
+            // a full block can not be released to TLS, remove it from chain
+            Block* const saved_next = _block->portal_next;
+            _block->dec_ref();  // _block may be deleted
+            _block = saved_next;
+        } else {
+            // should be last block
+            assert(NULL == _block->portal_next);
+        }
+    }
     return space;
 }
 
-void IOPortal::return_cached_blocks_impl(Block* b, bool release_to_tls) {
-    if (release_to_tls)
-        iobuf::release_tls_block_chain(b);
-    else {
-        do {
-            IOBuf::Block* const saved_next = b->portal_next;
-            b->dec_ref();
-            b = saved_next;
-        } while (b);
-    }
+void IOPortal::return_cached_blocks_impl(Block* b) {
+    iobuf::release_tls_block_chain(b);
 }
 
 IOBufAsZeroCopyInputStream::IOBufAsZeroCopyInputStream(const IOBuf& buf)
