@@ -327,8 +327,8 @@ void reset_blockmem_allocate_and_deallocate() {
 void set_blockmem_allocate_and_deallocate(blockmem_allocate_t a,                
         blockmem_deallocate_t f)                                                
 {                                                                               
-    blockmem_allocate = a;                                                 
-    blockmem_deallocate = f;                                               
+    blockmem_allocate = a;
+    blockmem_deallocate = f;
 } 
 
 static void *do_blockmem_allocate(size_t size)
@@ -2206,7 +2206,7 @@ start:
         p->size = roundup(p->size, 4);
         if (p->size >= p->cap) {
             // we fully used it
-            p->size = p->cap; 
+            p->size = p->cap;
             if (p == _block)
                 _block = NULL;
             Block* const saved_next = p->portal_next;
