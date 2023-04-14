@@ -67,10 +67,10 @@ public:
         return new T;
     }
 
-    void free(T *t) {
-        if (cache_.push(t) == 0)
+    void free(T *obj) {
+        if (cache_.push(obj) == 0)
             return;
-        cache_.push(t);
+        delete obj;
     }
 };
 
