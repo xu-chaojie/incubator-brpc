@@ -39,7 +39,6 @@
 #include "butil/fd_guard.h"                 // butil::fd_guard
 #include "butil/iobuf.h"
 #include "butil/lfstack.h"
-#include "bvar/bvar.h"
 #include "ucm/api/ucm.h"
 
 namespace butil {
@@ -48,32 +47,19 @@ namespace iobuf {
 #define SIZE_64K    (64 * 1024)
 #define SIZE_1M     (1024 * 1024)
 
-static int get_8K_count(void *arg);
-static int get_64K_count(void *arg);
-static int get_1M_count(void *arg);
-
 DEFINE_int32(butil_iobuf_8K_max, 40000, "Maximum number of 8k blocks cached");
 DEFINE_int32(butil_iobuf_64K_max, 3000, "Maximum number of 64k blocks cached");
 DEFINE_int32(butil_iobuf_1M_max, 100, "Maximum number of 1M blocks cached");
 
-bvar::PassiveStatus<int> g_iobuf_8K_count("8K iobuf", get_8K_count, NULL);
-bvar::Adder<int> *g_iobuf_8K_overflow = NULL;
-bvar::PassiveStatus<int> g_iobuf_64k_count("64K iobuf", get_64K_count, NULL);
-bvar::Adder<int> *g_iobuf_64k_overflow = NULL;
-bvar::PassiveStatus<int> g_iobuf_1M_count("1M iobuf", get_1M_count, NULL);
-bvar::Adder<int> *g_iobuf_1M_overflow = NULL;
+static butil::atomic<int> g_iobuf_8K_overflow;
+static butil::atomic<int> g_iobuf_64K_overflow;
+static butil::atomic<int> g_iobuf_1M_overflow;
 
 static pthread_once_t cache_start_once = PTHREAD_ONCE_INIT;
 static LFStack iobuf_8K_cache;
 static LFStack iobuf_64K_cache;
 static LFStack iobuf_1M_cache;
 static void do_start_cache();
-
-BAIDU_GLOBAL_INIT() {
-    g_iobuf_8K_overflow = new bvar::Adder<int> ("8K iobuf cache overflow");
-    g_iobuf_64k_overflow = new bvar::Adder<int> ("64K iobuf cache overflow");
-    g_iobuf_1M_overflow = new bvar::Adder<int>("1M iobuf cache overflow");
-}
 
 /*
  * ratecheck(): simple time-based rate-limit checking.
@@ -104,19 +90,34 @@ static inline void start_cache()
     pthread_once(&cache_start_once, do_start_cache);
 }
 
-static int get_8K_count(void *)
+int get_8K_count()
 {
     return iobuf_8K_cache.size();
 }
 
-static int get_64K_count(void *)
+int get_64K_count()
 {
     return iobuf_64K_cache.size();
 }
 
-static int get_1M_count(void *)
+int get_1M_count()
 {
     return iobuf_1M_cache.size();
+}
+
+int get_8K_overflow()
+{
+    return g_iobuf_8K_overflow.load(butil::memory_order_relaxed);
+}
+
+int get_64K_overflow()
+{
+    return g_iobuf_64K_overflow.load(butil::memory_order_relaxed);
+}
+
+int get_1M_overflow()
+{
+    return g_iobuf_1M_overflow.load(butil::memory_order_relaxed);
 }
 
 typedef ssize_t (*iov_function)(int fd, const struct iovec *vector,
@@ -357,31 +358,35 @@ static void do_blockmem_deallocate(void *mem, size_t size)
     constexpr struct timeval interval = {30, 0};
     struct timeval *tv = NULL; 
     const char *msg = NULL;
+    butil::atomic<int> *counter = NULL;
 
     if (size == IOBuf::DEFAULT_BLOCK_SIZE) {
         static struct timeval tv_def_last = {0, 0};
         if (!iobuf_8K_cache.push(mem))
             return;
-        *g_iobuf_8K_overflow << 1;
+        counter = &g_iobuf_8K_overflow;
         tv = &tv_def_last;
         msg = "8K";
     }
     else if (size == SIZE_64K) {
-        static struct timeval tv_64k_last = {0, 0};
+        static struct timeval tv_64K_last = {0, 0};
         if (!iobuf_64K_cache.push(mem))
             return;
-        *g_iobuf_64k_overflow << 1;
-        tv = &tv_64k_last;
+        counter = &g_iobuf_64K_overflow;
+        tv = &tv_64K_last;
         msg = "64K";
     } else if (size == SIZE_1M) {
         static struct timeval tv_1M_last = {0, 0};
         if (!iobuf_1M_cache.push(mem))
             return;
-        *g_iobuf_1M_overflow << 1;
+        counter = &g_iobuf_1M_overflow;
         tv = &tv_1M_last;
         msg = "1M";
     }
     call_blockmem_deallocate(mem, size);
+    if (counter) {
+        counter->fetch_add(1, butil::memory_order_relaxed);
+    }
     if (msg) {
         if (ratecheck(tv, &interval))
             LOG(WARNING) << msg << " iobuf cache overflow";
@@ -522,7 +527,7 @@ struct IOBuf::Block {
 
 namespace iobuf {
 
-static void prepare_8k_cache()
+static void prepare_8K_cache()
 {
     for (int i = 0; i < 300; ++i) {
         void *mem = blockmem_allocate(PAGE_SIZE, IOBuf::DEFAULT_BLOCK_SIZE);
@@ -541,12 +546,12 @@ static void do_start_cache()
 {
     int rc;
     rc = iobuf_8K_cache.init(FLAGS_butil_iobuf_8K_max);
-    CHECK(rc == 0) << "cannot create 8k size iobuf cache";
+    CHECK(rc == 0) << "cannot create 8KB size iobuf cache";
     rc = iobuf_64K_cache.init(FLAGS_butil_iobuf_64K_max);
-    CHECK(rc == 0) << "cannot create 64k size iobuf cache";
+    CHECK(rc == 0) << "cannot create 64KB size iobuf cache";
     rc = iobuf_1M_cache.init(FLAGS_butil_iobuf_1M_max);
     CHECK(rc == 0) << "cannot create 1M size iobuf cache";
-    prepare_8k_cache();
+    prepare_8K_cache();
 }
 
 // for unit test
