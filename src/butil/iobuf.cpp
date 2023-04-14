@@ -1962,14 +1962,15 @@ ssize_t IOPortal::pappend_from_file_descriptor(
 
 ssize_t IOPortal::prepare_buffer(size_t max_count, int max_iov, iobuf_ucp_iov_t *_vec, int *_nvec)
 {
-    // clear left behind blocks which may not be compatible with nvme PRP
-    return_cached_blocks();
+    // Release the remaining blocks from the last time which may not be
+    // compatible with nvme PRP
+    free_cached_blocks();
 
     auto &vec = *_vec;
     int &nvec = *_nvec;
     size_t left = 0, block_size = 0, space = 0, forced_block_size = 0;
     Block* prev_p = NULL;
-    Block* p = _block;
+    Block* p = NULL;
     int size_hint;
 
     if (max_count < SIZE_64K)
@@ -2009,7 +2010,6 @@ again:
                 errno = ENOMEM;
                 return -1;
             }
-            _release_to_tls = false;
             if (prev_p != NULL) {
                 prev_p->portal_next = p;
             } else {
@@ -2038,6 +2038,7 @@ ssize_t IOPortal::append_from_buffer(size_t nr) {
         _push_back_ref(r);
         _block->size += len;
         if (_block->full()) {
+            // a full block can not be released to TLS, remove it from chain
             Block* const saved_next = _block->portal_next;
             _block->dec_ref();  // _block may be deleted
             _block = saved_next;
@@ -2156,7 +2157,7 @@ ssize_t IOPortal::pappend_from_dev_descriptor(int fd, off_t offset,
 
     // PRP may can not use partial memory page
     // throw away left behind
-    return_cached_blocks();
+    free_cached_blocks();
 
     while (total < max_count) {
         size_t to_read = max_count - total;
@@ -2195,7 +2196,6 @@ start:
             // NVME PRP requirements, PRP requires second iovec to be start of
             // a page and its length is times of page size.
             p = iobuf::create_block();
-            _release_to_tls = false;
             if (BAIDU_UNLIKELY(!p)) {
                 errno = ENOMEM;
                 return -1;
@@ -2261,6 +2261,7 @@ start:
         _push_back_ref(r);
         _block->size += len;
         if (_block->full()) {
+            // a full block can not be released to TLS, remove it from chain
             Block* const saved_next = _block->portal_next;
             _block->dec_ref();  // _block may be deleted
             _block = saved_next;
@@ -2273,16 +2274,20 @@ start:
     return nr;
 }
 
-void IOPortal::return_cached_blocks_impl(Block* b, bool release_to_tls) {
-    if (release_to_tls)
-        iobuf::release_tls_block_chain(b);
-    else {
-        do {
-            IOBuf::Block* const saved_next = b->portal_next;
-            b->dec_ref();
-            b = saved_next;
-        } while (b);
+void IOPortal::free_cached_blocks() {
+    if (!_block)
+        return;
+    Block *b = _block;
+    while (b) {
+        IOBuf::Block* const saved_next = b->portal_next;
+        b->dec_ref();
+        b = saved_next;
     }
+    _block = NULL;
+}
+
+void IOPortal::return_cached_blocks_impl(Block* b) {
+    iobuf::release_tls_block_chain(b);
 }
 
 IOBufAsZeroCopyInputStream::IOBufAsZeroCopyInputStream(const IOBuf& buf)
