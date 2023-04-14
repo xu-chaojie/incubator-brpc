@@ -286,15 +286,13 @@ void UcpCm::DoRunFdThread()
         epoll_event e[32];
         int n = epoll_wait(epfd_, e, ARRAY_SIZE(e), 0);
         for (int i = 0; i < n; ++i) {
-            if (e[i].events & (EPOLLIN | EPOLLERR | EPOLLHUP)) {
-                HandleFdInput(e[i].data.fd);
-            }
-        }
-
-        for (int i = 0; i < n; ++i) {
-            if (e[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP)) {
+            if (e[i].events & EPOLLOUT) {
+                // requested to stop UcpCm
                 if (e[i].data.fd == pipe_fds_[1])
                     goto out;
+            }
+            if (e[i].events & (EPOLLIN | EPOLLERR | EPOLLHUP)) {
+                HandleFdInput(e[i].data.fd);
             }
         }
     }
