@@ -331,14 +331,6 @@ set(BUTIL_SOURCES
     ${PROJECT_SOURCE_DIR}/src/butil/popen.cpp
     ${PROJECT_SOURCE_DIR}/src/butil/pctrie.cc
     ${PROJECT_SOURCE_DIR}/src/butil/lfstack.cpp
-    ${PROJECT_SOURCE_DIR}/src/butil/uma/mtx.c
-    ${PROJECT_SOURCE_DIR}/src/butil/uma/rwlock.c
-    ${PROJECT_SOURCE_DIR}/src/butil/uma/smp.c
-    ${PROJECT_SOURCE_DIR}/src/butil/uma/sx.c
-    ${PROJECT_SOURCE_DIR}/src/butil/uma/systm.c
-    ${PROJECT_SOURCE_DIR}/src/butil/uma/task.c
-    ${PROJECT_SOURCE_DIR}/src/butil/uma/time.c
-    ${PROJECT_SOURCE_DIR}/src/butil/uma/uma_core.c
     )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
