@@ -23,12 +23,10 @@
 
 #include "echo.pb.h"
 
-#if BRPC_WITH_DPDK
 #include <rte_eal.h>
 #include <rte_errno.h>
 #include <rte_thread.h>
 #include <rte_malloc.h>
-#endif
 
 #include <err.h>
 
@@ -122,25 +120,6 @@ public:
 
 DEFINE_bool(h, false, "print help information");
 
-#if BRPC_WITH_DPDK
-
-void
-unaffinitize_thread(void)
-{
-    rte_cpuset_t new_cpuset;
-    long num_cores, i;
-
-    CPU_ZERO(&new_cpuset);
-
-    num_cores = sysconf(_SC_NPROCESSORS_CONF);
-
-    /* Create a mask containing all CPUs */
-    for (i = 0; i < num_cores; i++) {
-         CPU_SET(i, &new_cpuset);
-    }
-    rte_thread_set_affinity(&new_cpuset);
-}
-
 void* dpdk_mem_allocate(size_t align, size_t sz)
 {
     /* rte_malloc seems fast enough, otherwise we need to use mempool */
@@ -187,33 +166,14 @@ int dpdk_for_uct_free(void *address, size_t length)
     return 0;
 }
 
-void dpdk_init(int argc, char **argv)
+void init_brpc_alloc(int argc, char **argv)
 {
-#if 0
-    char *eal_argv[] = {argv[0], (char *)"--in-memory", NULL};
-
-    if (rte_eal_init(2, eal_argv) == -1) {
-        errx(1, "rte_eal_init: %s", rte_strerror(rte_errno));
-    }
-
-    /* !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-     * Following is important. Above, we didn't specify dpdk runs on every cpu,
-     * thus dpdk will default bind our thread to first cpu, and the cpu mask
-     * is inherited by pthread_create(), causes every thread in future bind to
-     * same cpu! This causes big performance problem!
-     * !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-     */
-    unaffinitize_thread();
-#endif
-
     // make iobuf use dpdk malloc & free
     butil::iobuf::set_blockmem_allocate_and_deallocate(dpdk_mem_allocate, 
         	dpdk_mem_free);
     // make ucx use dpdk malloc & free
     uct_set_user_mem_func(dpdk_for_uct_alloc, dpdk_for_uct_free); 
 }
-
-#endif
 
 int main(int argc, char* argv[]) {
     std::string help_str = "dummy help infomation";
@@ -229,19 +189,16 @@ int main(int argc, char* argv[]) {
 
     set_pfs_options();
 
-#if BRPC_WITH_DPDK
     if (pfs_spdk_setup())
         return 1;
 
     if (FLAGS_use_dpdk_malloc)
-        dpdk_init(argc, argv);
+        init_brpc_alloc(argc, argv);
 
     set_ucp_callback();
 
     if (pfsd_start(1))
         return 1;
-
-#endif
 
     // Generally you only need one Server.
     brpc::Server server;
@@ -276,10 +233,8 @@ int main(int argc, char* argv[]) {
     // Wait until Ctrl-C is pressed, then Stop() and Join() the server.
     server.RunUntilAskedToQuit();
 
-#if BRPC_WITH_DPDK
     pfsd_stop();
     pfsd_wait_stop();
     pfs_spdk_cleanup();
-#endif
     return 0;
 }
