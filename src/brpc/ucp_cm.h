@@ -23,7 +23,6 @@
 #include "brpc/ucp_connection.h"
 
 #include <sys/types.h>
-#include <queue>
 
 namespace brpc {
 
