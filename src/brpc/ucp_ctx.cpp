@@ -191,8 +191,10 @@ int create_ucp_ep(ucp_worker_h w, ucp_conn_request_h conn_request,
     ucp_ep_params_t ep_params;
     ucs_status_t stat;
 
-    ep_params.field_mask      = UCP_EP_PARAM_FIELD_ERR_HANDLER |
-                                UCP_EP_PARAM_FIELD_CONN_REQUEST;
+    ep_params.field_mask      = UCP_EP_PARAM_FIELD_ERR_HANDLER  |
+                                UCP_EP_PARAM_FIELD_CONN_REQUEST |
+                                UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
+    ep_params.err_mode        = UCP_ERR_HANDLING_MODE_PEER;
     ep_params.conn_request    = conn_request;
     ep_params.err_handler.cb  = err_cb;
     ep_params.err_handler.arg = err_arg;
