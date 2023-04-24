@@ -22,11 +22,9 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <string.h>
+#include <unistd.h>
 
-#include <deque>
 #include <memory>
-#include <utility>
-
 #include <gflags/gflags.h>
 
 namespace brpc {
