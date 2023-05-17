@@ -316,7 +316,7 @@ void  (*blockmem_deallocate)(void*, size_t) = default_blockmem_deallocate;
 static inline void call_blockmem_deallocate(void *mem, size_t size)
 {
     // unregister from ucx 
-    ucm_vm_munmap(mem, size);
+    // ucm_vm_munmap(mem, size);
     blockmem_deallocate(mem, size);
 }
 
