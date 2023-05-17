@@ -83,7 +83,7 @@ static pthread_once_t init_once = PTHREAD_ONCE_INIT;
 static pthread_t uma_timeout_td;
 static pthread_t uma_reclaim_td;
 static uint64_t g_clock;
-static uint64_t g_disable_cpu_cache_recycle = 1;
+static unsigned g_enable_cpu_cache_recycle = 0;
 
 #define UMA_CACHE_EXPIRE 180
 
@@ -1598,10 +1598,13 @@ static void
 uma_startup_impl(void)
 {
 	struct uma_zctor_args args;
+    char *str;
 
-	if (getenv("brpc_enable_uma_recycle_cpu_cache")) {
-		g_disable_cpu_cache_recycle = 0;
-		printf("Enabled brpc uma cpu cache recycle\n");
+	str = getenv("brpc_enable_uma_recycle_cpu_cache");
+	if (str != NULL) {
+		g_enable_cpu_cache_recycle = atoi(str);
+		printf("Enabled brpc uma cpu cache recycle: %d\n", 
+            g_enable_cpu_cache_recycle);
 	}
 
 #ifdef UMA_DEBUG
@@ -2783,7 +2786,7 @@ uma_reclaim_worker(void *arg)
 		pthread_mutex_lock(&uma_drain_mtx);
 		timed_out = 0;
 		while (!uma_reclaim_needed) {
-			if (g_disable_cpu_cache_recycle) {
+			if (!g_enable_cpu_cache_recycle) {
 				pthread_cond_wait(&uma_drain_cond, &uma_drain_mtx);
 				rc = 0;
 			} else {
