@@ -48,7 +48,7 @@ public:
     // when the write-end is closed, the manager will be notified, and it
     // will close the connection in background.
     int Accept(ucp_conn_request_h req);
-    int Connect(const butil::EndPoint &peer);
+    int Connect(const butil::EndPoint &peer, bool useForHealthCheck);
     UcpConnectionRef GetConnection(int fd1);
 
     UcpWorker *GetWorker();
@@ -82,7 +82,7 @@ private:
     void HandleFdInput(int fd);
     int StartFdThread();
     void StopFdThread();
-    int DoConnect(const ConnectionOptions& opts);
+    int DoConnect(const ConnectionOptions& opts, bool useForHealthCheck);
     void ReplaceFd1(int fd1, const Fd1Item &item);
 
     bthread::Mutex mutex_;

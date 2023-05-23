@@ -43,7 +43,8 @@ public:
         STOPPING = 3,
     };
 
-    UcpWorker(UcpWorkerPool *pool, int id);
+    enum PollMode { PollAuto, PollWait };
+    UcpWorker(UcpWorkerPool *pool, int id, PollMode mode);
     ~UcpWorker();
 
     int Start();
@@ -132,6 +133,7 @@ private:
     std::mutex mutex_ BAIDU_CACHELINE_ALIGNMENT;
     std::list<EventCallback *> external_events_;
     Status status_;
+    bool busy_poll_;
     std::atomic<int> conn_reqs_;
     // Worker id
     int id_;
