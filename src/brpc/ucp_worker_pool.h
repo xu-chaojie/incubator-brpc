@@ -39,7 +39,8 @@ public:
     void Stop();
     void Barrier();
 
-    UcpWorker *GetWorker() const;
+    UcpWorker *GetWorker(int idx=-1) const;
+    unsigned GetWorkerNum() const { return workers_.size(); }
 
 private:
     DISALLOW_COPY_AND_ASSIGN(UcpWorkerPool);

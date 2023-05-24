@@ -1239,7 +1239,8 @@ int Socket::Connect(const timespec* abstime,
 
     if (is_ucp_connection()) {
         _ssl_state = SSL_OFF; // FIXME
-        sockfd.reset(get_or_create_ucp_cm()->Connect(_remote_side));
+        bool health_check = (on_connect == NULL);
+        sockfd.reset(get_or_create_ucp_cm()->Connect(_remote_side, health_check));
     } else {
         if (butil::is_unix_sock_endpoint(remote_side())) {
             sockfd.reset(socket(AF_LOCAL, SOCK_STREAM, 0));

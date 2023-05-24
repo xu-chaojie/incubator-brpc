@@ -282,8 +282,9 @@ public:
     }
 };
 
-UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
+UcpWorker::UcpWorker(UcpWorkerPool *pool, int id, PollMode poll_mode)
     : status_(UNINITIALIZED)
+    , busy_poll_(true)
     , conn_reqs_(0)
     , id_(id)
     , worker_tid_(INVALID_BTHREAD)
@@ -295,6 +296,17 @@ UcpWorker::UcpWorker(UcpWorkerPool *pool, int id)
     , wakeup_flag_(0)
     , send_list_(NULL)
 {
+    switch(poll_mode) {
+    case PollAuto:
+        busy_poll_ = FLAGS_brpc_ucp_worker_busy_poll;
+        break;
+    case PollWait:
+        busy_poll_ = false;
+        break;
+    default:
+        LOG(ERROR) << "Unknown poll mode";
+    }
+
     TAILQ_INIT(&msg_q_);
     TAILQ_INIT(&recv_comp_q_);
     // This can not be changed dynamically
@@ -487,7 +499,7 @@ void UcpWorker::Wakeup()
 
 void UcpWorker::MaybeWakeup()
 {
-    if (FLAGS_brpc_ucp_worker_busy_poll)
+    if (busy_poll_)
         return;
     if (pthread_self() != worker_tid_) {
         Wakeup();
@@ -569,7 +581,7 @@ void UcpWorker::DoRunWorker()
     tv_int.tv_sec = 0;
     tv_int.tv_usec = FLAGS_brpc_ucp_worker_poll_time;
     while (status_ != STOPPING) {
-        if (!FLAGS_brpc_ucp_worker_busy_poll) {
+        if (!busy_poll_) {
             if (!wakeup_flag_.exchange(0, std::memory_order_relaxed)) {
                 poll_info.fd = event_fd_;
                 poll_info.events = POLLIN;
@@ -598,12 +610,12 @@ again:
         RecycleWorkerData();
         DispatchCallback();
         InvokeExternalEvents();
-        ucs_status_t stat = !FLAGS_brpc_ucp_worker_busy_poll ?
+        ucs_status_t stat = !busy_poll_ ?
             ucp_worker_arm(ucp_worker_) : UCS_OK;
         mutex_.unlock();
         if (stat == UCS_ERR_BUSY) /* some events are arrived already */
             goto again;
-        if (!FLAGS_brpc_ucp_worker_busy_poll) {
+        if (!busy_poll_) {
             count++;
             gettimeofday(&tv_now, NULL);
             if (timercmp(&tv_now, &tv_end, <)) {
@@ -1396,7 +1408,7 @@ ssize_t UcpWorker::StartSend(int cmd, UcpConnection *conn,
     }
 
     if (pthread_self() != worker_tid_) {
-        if (FLAGS_brpc_ucp_worker_busy_poll)
+        if (busy_poll_)
             goto out;
         if (worker_active_.load(std::memory_order_relaxed)) {
             MaybeWakeup();
