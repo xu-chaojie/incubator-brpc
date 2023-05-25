@@ -1210,20 +1210,17 @@ ssize_t UcpWorker::StartRecv(UcpConnection *conn)
 void UcpWorker::DispatchDataReady()
 {
     // assert(w->mutex_.is_locked());
-    std::queue<UcpConnectionRef> tmp;
-
-    if (data_ready_.empty()) {
-        return;
-    }
-
-    tmp.swap(data_ready_);
-    mutex_.unlock();
-    while (!tmp.empty()) {
-        auto conn = tmp.front();
-        tmp.pop();
+    int step = 10;
+    while (!data_ready_.empty()) {
+        auto conn = data_ready_.front();
+        data_ready_.pop();
         conn->DataReady();
+        if (--step == 0) {
+            mutex_.unlock();
+            step = 10;
+            mutex_.lock();
+        }
     }
-    mutex_.lock();
 }
 
 void UcpWorker::SetDataReady(UcpConnection* conn)
