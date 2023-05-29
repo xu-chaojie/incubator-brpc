@@ -26,7 +26,12 @@ UcpWorkerPool::UcpWorkerPool(int nworkers)
     :started_(false)
 {
     for (auto i = 0; i < nworkers; ++i) {
-         UcpWorker *w = new UcpWorker(this, i);
+         UcpWorker::PollMode mode;
+         if (i == 0)
+             mode = UcpWorker::PollWait;
+         else
+             mode = UcpWorker::PollAuto;
+         UcpWorker *w = new UcpWorker(this, i, mode);
          workers_.push_back(w);
     }
 }
@@ -89,11 +94,15 @@ void UcpWorkerPool::Barrier()
     LOG(INFO)<< " barrier end.";
 }
 
-UcpWorker *UcpWorkerPool::GetWorker() const
+UcpWorker *UcpWorkerPool::GetWorker(int idx) const
 {
+    if (idx != -1) {
+        return workers_.at(idx);
+    }
     unsigned n = seq_.fetch_add(1, std::memory_order_relaxed);
 
-    n %= workers_.size();
+    n %= (workers_.size() - 1);
+    n += 1; // worker0 is for health checking
     return workers_[n];
 }
 

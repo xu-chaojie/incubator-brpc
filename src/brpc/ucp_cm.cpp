@@ -124,7 +124,8 @@ int UcpCm::Start(int nworkers)
         LOG(FATAL) << "UcpCm hasn't stopped yet, status=" << status();
         return -1;
     }
-    pool_ = new UcpWorkerPool(nworkers);
+    // add extra worker which has index 0 for health checking
+    pool_ = new UcpWorkerPool(nworkers+1);
     if (pool_->Start()) {
         delete pool_;
         pool_ = NULL;
@@ -171,20 +172,20 @@ int UcpCm::Accept(ucp_conn_request_h req)
     ConnectionOptions opt;
 
     opt.req = req;
-    return DoConnect(opt);
+    return DoConnect(opt, false);
 }
 
-int UcpCm::Connect(const butil::EndPoint &peer)
+int UcpCm::Connect(const butil::EndPoint &peer, bool useForHealthCheck)
 {
     ConnectionOptions opt;
 
     opt.endpoint = peer;
-    return DoConnect(opt);
+    return DoConnect(opt, useForHealthCheck);
 }
 
-int UcpCm::DoConnect(const ConnectionOptions& opts)
+int UcpCm::DoConnect(const ConnectionOptions& opts, bool useForHealthCheck)
 {
-    UcpWorker *worker = pool_->GetWorker();
+    UcpWorker *worker = pool_->GetWorker(useForHealthCheck ? 0 : -1);
     int fds[2];
     int saved_errno;
     int err = 0;
@@ -286,15 +287,13 @@ void UcpCm::DoRunFdThread()
         epoll_event e[32];
         int n = epoll_wait(epfd_, e, ARRAY_SIZE(e), 0);
         for (int i = 0; i < n; ++i) {
-            if (e[i].events & (EPOLLIN | EPOLLERR | EPOLLHUP)) {
-                HandleFdInput(e[i].data.fd);
-            }
-        }
-
-        for (int i = 0; i < n; ++i) {
-            if (e[i].events & (EPOLLOUT | EPOLLERR | EPOLLHUP)) {
+            if (e[i].events & EPOLLOUT) {
+                // requested to stop UcpCm
                 if (e[i].data.fd == pipe_fds_[1])
                     goto out;
+            }
+            if (e[i].events & (EPOLLIN | EPOLLERR | EPOLLHUP)) {
+                HandleFdInput(e[i].data.fd);
             }
         }
     }
