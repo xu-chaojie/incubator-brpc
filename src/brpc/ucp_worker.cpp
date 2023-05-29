@@ -609,7 +609,12 @@ again:
             step--;
         }
         ucp_worker_progress_timer.stop();
-        g_ucp_worker_progress_latency << ucp_worker_progress_timer.u_elapsed();
+
+        // first ucp worker is not counted because it's used for checking health
+        if (id_ != 0) {
+            g_ucp_worker_progress_latency
+                    << ucp_worker_progress_timer.u_elapsed();
+        }
 
         if (ucp_worker_progress_timer.m_elapsed(0.0) >= 200) {
             LOG(WARNING) << "ucp_worker_progress takes "
@@ -820,14 +825,18 @@ static inline void remove_from_recv_q(UcpAmList *list, UcpAmMsg *msg)
 
 namespace {
 struct DispatchAmMsgQStat {
-    DispatchAmMsgQStat() {
+    DispatchAmMsgQStat(bool update_metric) : update_metric{update_metric} {
         timer.start();
     }
 
     ~DispatchAmMsgQStat() {
         timer.stop();
         const int64_t elapsed_us = timer.u_elapsed();
-        g_dispatch_am_msg_q_latency << elapsed_us;
+
+        if (update_metric) {
+            g_dispatch_am_msg_q_latency << elapsed_us;
+        }
+
         if (elapsed_us >= 200 * 1000) {
             LOG(WARNING) << "DispatchAmMsgQ takes " << (elapsed_us / 1000)
                          << "ms, " << msg_count << " messages, "
@@ -838,12 +847,13 @@ struct DispatchAmMsgQStat {
     int32_t msg_count = 0;
     int64_t prepare_buffer_ms = 0;
     butil::Timer timer;
+    bool update_metric;
 };
 }
 
 void UcpWorker::DispatchAmMsgQ()
 {
-    DispatchAmMsgQStat stat;
+    DispatchAmMsgQStat stat{id_ != 0};
     butil::Timer prepare_buffer_timer;
 
     UcpAmMsg *msg, *elem;
